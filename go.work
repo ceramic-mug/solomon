@@ -1,0 +1,9 @@
+go 1.26.1
+
+use (
+	./packages/ai
+	./packages/domain
+	./packages/infrastructure
+	./packages/simulation
+	./services/api
+)
