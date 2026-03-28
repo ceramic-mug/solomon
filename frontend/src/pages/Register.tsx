@@ -1,18 +1,56 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { register } from '../api/client'
 import { useAuthStore } from '../store/auth'
-import { Coins } from 'lucide-react'
+import { Coins, Loader2 } from 'lucide-react'
+
+// Ask the backend to look up state income tax via Gemini.
+// Returns a flat marginal rate (e.g. 5.0 for 5%) or null on failure.
+async function fetchStateTax(stateCode: string): Promise<number | null> {
+  try {
+    const res = await fetch(`/ai/state-tax?state=${encodeURIComponent(stateCode.toUpperCase())}`)
+    if (!res.ok) return null
+    const data = await res.json() as { rate: number }
+    return data.rate
+  } catch {
+    return null
+  }
+}
 
 export default function Register() {
   const navigate = useNavigate()
   const setAuth = useAuthStore(s => s.setAuth)
-  const [form, setForm] = useState({ name: '', email: '', password: '', state_code: '', state_tax: '0' })
+  const [form, setForm] = useState({ name: '', email: '', password: '', state_code: '', state_tax: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [taxLookupState, setTaxLookupState] = useState<'idle' | 'loading' | 'done'>('idle')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [k]: e.target.value }))
+
+  // Auto-fill state tax when a valid 2-letter code is entered
+  useEffect(() => {
+    const code = form.state_code.trim()
+    if (code.length !== 2) {
+      setTaxLookupState('idle')
+      return
+    }
+
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      setTaxLookupState('loading')
+      const rate = await fetchStateTax(code)
+      if (rate !== null) {
+        setForm(f => ({ ...f, state_tax: rate.toFixed(2) }))
+        setTaxLookupState('done')
+      } else {
+        setTaxLookupState('idle')
+      }
+    }, 600)
+
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [form.state_code])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -23,8 +61,8 @@ export default function Register() {
         form.email,
         form.password,
         form.name,
-        form.state_code,
-        parseFloat(form.state_tax) / 100,
+        form.state_code.toUpperCase(),
+        parseFloat(form.state_tax || '0') / 100,
       )
       setAuth(res.user, res.access_token)
       navigate('/')
@@ -63,16 +101,40 @@ export default function Register() {
             <label className="label">Password</label>
             <input type="password" className="input w-full" placeholder="Min 8 characters" value={form.password} onChange={set('password')} minLength={8} required />
           </div>
+
           <div className="flex gap-3">
             <div className="flex-1">
               <label className="label">State</label>
-              <input type="text" className="input w-full uppercase" placeholder="TX" maxLength={2} value={form.state_code} onChange={set('state_code')} />
+              <input
+                type="text"
+                className="input w-full uppercase"
+                placeholder="TX"
+                maxLength={2}
+                value={form.state_code}
+                onChange={set('state_code')}
+              />
             </div>
             <div className="flex-1">
-              <label className="label">State tax %</label>
-              <input type="number" className="input w-full" placeholder="0" step="0.1" min="0" max="15" value={form.state_tax} onChange={set('state_tax')} />
+              <label className="label flex items-center gap-1.5">
+                State income tax %
+                {taxLookupState === 'loading' && <Loader2 size={11} className="animate-spin text-blue-400" />}
+                {taxLookupState === 'done' && <span className="text-emerald-500 text-xs">auto-filled</span>}
+              </label>
+              <input
+                type="number"
+                className="input w-full"
+                placeholder="auto"
+                step="0.01"
+                min="0"
+                max="15"
+                value={form.state_tax}
+                onChange={set('state_tax')}
+              />
             </div>
           </div>
+          <p className="text-xs text-gray-600 -mt-2">
+            Used in simulation as a flat rate on taxable income. You can update this in settings anytime.
+          </p>
 
           <button type="submit" className="btn-primary w-full" disabled={loading}>
             {loading ? 'Creating account...' : 'Create account'}

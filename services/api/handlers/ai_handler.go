@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/google/generative-ai-go/genai"
 	"github.com/google/uuid"
@@ -50,6 +51,67 @@ func NewAIHandler(repo *postgres.Repository, geminiAPIKey string) *AIHandler {
 type chatRequest struct {
 	PlanID  string `json:"plan_id"`
 	Message string `json:"message"`
+}
+
+// StateTax handles GET /ai/state-tax?state=XX — returns the current flat
+// state income tax rate for the given 2-letter state code.
+// This endpoint is public (no auth) so it can be called during registration.
+func (h *AIHandler) StateTax(c echo.Context) error {
+	stateCode := c.QueryParam("state")
+	if len(stateCode) != 2 {
+		return echo.NewHTTPError(http.StatusBadRequest, "state must be a 2-letter code")
+	}
+
+	if h.apiKey == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "AI not configured")
+	}
+
+	ctx := c.Request().Context()
+	client, err := genai.NewClient(ctx, option.WithAPIKey(h.apiKey))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "AI client error")
+	}
+	defer client.Close()
+
+	model := client.GenerativeModel("gemini-3-flash-preview")
+	prompt := fmt.Sprintf(
+		`What is the current (2026) state income tax rate for %s (US state code)?
+Return ONLY a JSON object in this exact format with no other text:
+{"rate": <flat_rate_as_percentage_float>}
+
+Rules:
+- For states with no income tax (TX, FL, NV, WA, WY, SD, AK, TN, NH), return {"rate": 0}
+- For states with flat rates, return that rate
+- For states with graduated brackets, return the top marginal rate
+- rate is a percentage (e.g. 5.0 means 5%%, not 0.05)`, stateCode)
+
+	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+	if err != nil || len(resp.Candidates) == 0 {
+		return echo.NewHTTPError(http.StatusInternalServerError, "AI lookup failed")
+	}
+
+	var raw string
+	for _, part := range resp.Candidates[0].Content.Parts {
+		if t, ok := part.(genai.Text); ok {
+			raw += string(t)
+		}
+	}
+
+	// Strip markdown fences if Gemini wraps the JSON
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimPrefix(raw, "```json")
+	raw = strings.TrimPrefix(raw, "```")
+	raw = strings.TrimSuffix(raw, "```")
+	raw = strings.TrimSpace(raw)
+
+	var result struct {
+		Rate float64 `json:"rate"`
+	}
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not parse AI response")
+	}
+
+	return c.JSON(http.StatusOK, result)
 }
 
 // Chat handles POST /ai/chat — streams SSE events back to the client.

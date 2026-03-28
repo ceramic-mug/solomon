@@ -59,6 +59,7 @@ func Register(e *echo.Echo, auth *handlers.AuthHandler, plans *handlers.PlanHand
 	api.POST("/plans/:id/giving", comp.CreateGiving)
 	api.DELETE("/plans/:id/giving/:sid", comp.DeleteGiving)
 
-	// AI
+	// AI — state-tax is public (called during registration before auth)
+	e.GET("/ai/state-tax", ai.StateTax)
 	api.POST("/ai/chat", ai.Chat)
 }
