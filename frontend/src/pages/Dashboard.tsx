@@ -1,17 +1,23 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listPlans, createPlan, getPlan, simulate } from '../api/client'
+import { listPlans, createPlan, getPlan, simulate, comparePlans, compareRepayment } from '../api/client'
 import { usePlanStore } from '../store/plan'
 import FinancialOverviewChart from '../components/charts/FinancialOverviewChart'
 import DebtTrajectoryChart from '../components/charts/DebtTrajectoryChart'
 import CashFlowEvolution from '../components/charts/CashFlowEvolution'
+import AnnualSummaryTable from '../components/charts/AnnualSummaryTable'
+import ComparisonPanel from '../components/charts/ComparisonPanel'
+import RepaymentComparisonPanel from '../components/charts/RepaymentComparisonPanel'
+import SavingsBreakdownChart from '../components/charts/SavingsBreakdownChart'
 import DebtFreedomPanel from '../components/panels/DebtFreedomPanel'
+import GoalsPanel from '../components/panels/GoalsPanel'
+import SensitivityPanel from '../components/panels/SensitivityPanel'
 import SimpleAgent from '../components/chat/SimpleAgent'
 import type { Plan, MonthSnapshot } from '../api/types'
 import {
   Plus, GitBranch, TrendingUp, DollarSign, CreditCard, Landmark,
-  MessageSquare, CalendarRange, Heart, Wallet, Calendar, RefreshCw,
+  MessageSquare, CalendarRange, Heart, Wallet, Calendar, RefreshCw, Lock, X,
 } from 'lucide-react'
 import { IncomeTab, ExpensesTab, DebtsTab, InvestmentsTab, EventsTab, GivingTab } from '../components/forms/PlanComponents'
 
@@ -34,14 +40,18 @@ function calLabel(calMonth: number, year: number) {
   return `${MONTH_NAMES[(calMonth - 1) % 12]} ${year}`
 }
 
-/** Find the first snapshot where total_debt < $100 */
 function findDebtFreeSnap(snapshots: MonthSnapshot[]) {
   return snapshots.find(s => s.total_debt < 100) ?? null
 }
 
-/** Find the snapshot where PSLF qualifying payments first hit 120 */
 function findPSLFSnap(snapshots: MonthSnapshot[]) {
   return snapshots.find(s => (s.pslf_qualifying_payments ?? 0) >= 120) ?? null
+}
+
+/** Last snapshot in a given calendar year */
+function findSnapForYear(snapshots: MonthSnapshot[], year: number): MonthSnapshot | null {
+  const hits = snapshots.filter(s => s.year === year)
+  return hits[hits.length - 1] ?? null
 }
 
 interface StatCardProps {
@@ -49,20 +59,22 @@ interface StatCardProps {
   value: string
   sub?: string
   icon: React.ReactNode
-  accent?: 'red' | 'green' | 'purple' | 'blue' | 'orange' | 'default'
+  accent?: 'red' | 'green' | 'purple' | 'blue' | 'orange' | 'teal' | 'default'
+  dimmed?: boolean
 }
 
-function StatCard({ label, value, sub, icon, accent = 'default' }: StatCardProps) {
+function StatCard({ label, value, sub, icon, accent = 'default', dimmed }: StatCardProps) {
   const accentClass: Record<string, string> = {
     red:     'text-red-400',
     green:   'text-emerald-400',
     purple:  'text-purple-400',
     blue:    'text-blue-400',
     orange:  'text-orange-400',
+    teal:    'text-teal-400',
     default: 'text-white',
   }
   return (
-    <div className="stat-card">
+    <div className={`stat-card transition-opacity ${dimmed ? 'opacity-40' : ''}`}>
       <div className="flex items-center justify-between mb-1">
         <span className="stat-label">{label}</span>
         <span className="text-gray-600">{icon}</span>
@@ -87,7 +99,7 @@ function TabContent({ tab, plan }: { tab: TabType; plan: Plan }) {
   }
 }
 
-type ChartView = 'overview' | 'debt' | 'cashflow'
+type ChartView = 'overview' | 'debt' | 'cashflow' | 'savings' | 'table' | 'repayment' | 'comparison'
 
 export default function Dashboard() {
   const qc = useQueryClient()
@@ -96,6 +108,10 @@ export default function Dashboard() {
   const [newName, setNewName] = useState('')
   const [tab, setTab] = useState<TabType>('income')
   const [chartView, setChartView] = useState<ChartView>('overview')
+  const [comparePlanId, setComparePlanId] = useState<string | null>(null)
+  const [whatIfSnapshots, setWhatIfSnapshots] = useState<MonthSnapshot[] | null>(null)
+  const [hoveredYear, setHoveredYear] = useState<number | null>(null)
+  const [lockedYear, setLockedYear] = useState<number | null>(null)
 
   const { data: plans = EMPTY_PLANS, isLoading } = useQuery({
     queryKey: ['plans'],
@@ -109,16 +125,34 @@ export default function Dashboard() {
     if (activePlan_id && activePlan_id !== activePlanId) setActivePlan(activePlan_id)
   }, [activePlan_id])
 
+  // Reset time-lock when switching plans
+  useEffect(() => {
+    setLockedYear(null)
+    setHoveredYear(null)
+  }, [activePlan_id])
+
   const { data: activePlan } = useQuery({
     queryKey: ['plan', activePlan_id],
     queryFn: () => getPlan(activePlan_id!),
     enabled: !!activePlan_id,
   })
 
-  const { data: simResult, isFetching: simFetching } = useQuery({
+  const { data: simResult, isFetching: simFetching, refetch: refetchSim } = useQuery({
     queryKey: ['simulate', activePlan_id],
     queryFn: () => simulate(activePlan_id!, { filing_status: 'mfj', household_size: 2 }),
     enabled: !!activePlan_id,
+  })
+
+  const { data: comparisonData } = useQuery({
+    queryKey: ['compare', activePlan_id, comparePlanId],
+    queryFn: () => comparePlans(activePlan_id!, comparePlanId!, true),
+    enabled: !!activePlan_id && !!comparePlanId,
+  })
+
+  const { data: repaymentData } = useQuery({
+    queryKey: ['repayment', activePlan_id],
+    queryFn: () => compareRepayment(activePlan_id!, { filing_status: 'mfj', household_size: 2 }),
+    enabled: !!activePlan_id && chartView === 'repayment',
   })
 
   const createMutation = useMutation({
@@ -144,28 +178,78 @@ export default function Dashboard() {
   const pslfSnap = findPSLFSnap(snapshots)
   const debtAccounts = activePlan?.debt_accounts ?? []
   const hasDebts = debtAccounts.length > 0
+  const hasStudentLoans = debtAccounts.some(d => d.type === 'student_loan')
   const hasPSLF = debtAccounts.some(d => d.pslf_eligible)
+  const hasGiving = (firstSnap?.total_giving ?? 0) > 0 || (activePlan?.giving_targets?.length ?? 0) > 0
+  const hasInvestments = (activePlan?.investment_accounts?.length ?? 0) > 0
+  const multiPlan = plans.length > 1
 
-  // Derived stats
   const totalInterestPaid = snapshots.reduce((s, snap) => s + snap.total_interest_paid, 0)
   const startingPSLFPayments = debtAccounts
     .filter(d => d.pslf_eligible)
     .reduce((max, d) => Math.max(max, d.pslf_payments_made ?? 0), 0)
 
+  // ── Time-travel: active snapshot + annual aggregates ──
+  const activeYear = lockedYear ?? hoveredYear
+  const activeSnap = activeYear ? (findSnapForYear(snapshots, activeYear) ?? firstSnap) : firstSnap
+  const isTimeTravel = activeSnap != null && activeSnap !== firstSnap
+  const isPastDebtFree = debtFreeSnap != null && activeYear != null && activeYear > debtFreeSnap.year
+
+  // When time-travelling, aggregate the full year for flow metrics (more intuitive than a single December month)
+  const annualForYear = activeYear ? (() => {
+    const yr = snapshots.filter(s => s.year === activeYear)
+    if (!yr.length) return null
+    const last = yr[yr.length - 1]
+    return {
+      grossIncome:   yr.reduce((s, m) => s + m.gross_income, 0),
+      netIncome:     yr.reduce((s, m) => s + m.net_income, 0),
+      cashFlow:      yr.reduce((s, m) => s + m.cash_flow, 0),
+      debtPayments:  yr.reduce((s, m) => s + m.total_debt_payments, 0),
+      interestPaid:  yr.reduce((s, m) => s + m.total_interest_paid, 0),
+      // Stock values from end-of-year snapshot
+      totalDebt:     last.total_debt,
+      totalInvestments: last.total_investments,
+      netWorth:      last.net_worth,
+      // PSLF: if forgiveness has happened by this year, pin at 120
+      pslfCount: (pslfSnap && activeYear >= pslfSnap.year)
+        ? 120
+        : Math.min(last.pslf_qualifying_payments ?? 0, 120),
+    }
+  })() : null
+
+  function handleChartHover(year: number | null) {
+    if (!lockedYear) setHoveredYear(year)
+  }
+  function handleChartClick(year: number) {
+    setLockedYear(prev => prev === year ? null : year)
+    setHoveredYear(null)
+  }
+
+  // ── Chart views (context-aware) ──
   const tabs: { key: TabType; label: string; icon: React.ReactNode }[] = [
-    { key: 'income',      label: 'Income',      icon: <DollarSign size={13} /> },
-    { key: 'expenses',    label: 'Expenses',    icon: <CreditCard size={13} /> },
-    { key: 'debts',       label: 'Debt',        icon: <CreditCard size={13} /> },
-    { key: 'investments', label: 'Invest',      icon: <Landmark size={13} /> },
-    { key: 'events',      label: 'Events',      icon: <CalendarRange size={13} /> },
-    { key: 'giving',      label: 'Giving',      icon: <Heart size={13} /> },
+    { key: 'income',      label: 'Income',   icon: <DollarSign size={13} /> },
+    { key: 'expenses',    label: 'Expenses', icon: <CreditCard size={13} /> },
+    { key: 'debts',       label: 'Debt',     icon: <CreditCard size={13} /> },
+    { key: 'investments', label: 'Invest',   icon: <Landmark size={13} /> },
+    { key: 'events',      label: 'Events',   icon: <CalendarRange size={13} /> },
+    { key: 'giving',      label: 'Giving',   icon: <Heart size={13} /> },
   ]
 
-  const chartViews: { key: ChartView; label: string }[] = [
-    { key: 'overview',  label: 'Net Worth · Debt · Investments' },
-    { key: 'debt',      label: 'Debt Payoff Trajectories' },
-    { key: 'cashflow',  label: 'Budget Over Time' },
+  const allChartViews: { key: ChartView; label: string; show: boolean }[] = [
+    { key: 'overview',   label: 'Overview',       show: true },
+    { key: 'debt',       label: 'Debt',            show: hasDebts },
+    { key: 'cashflow',   label: 'Budget',          show: true },
+    { key: 'savings',    label: 'Savings',         show: hasInvestments },
+    { key: 'table',      label: 'Annual Summary',  show: true },
+    { key: 'repayment',  label: 'Repayment',       show: hasStudentLoans },
+    { key: 'comparison', label: 'vs. Plan',        show: multiPlan },
   ]
+  const chartViews = allChartViews.filter(v => v.show)
+
+  // If current chartView is hidden (e.g. debts removed), fall back to overview
+  const validView = chartViews.some(v => v.key === chartView) ? chartView : 'overview'
+
+  const comparePlan = plans.find(p => p.id === comparePlanId)
 
   return (
     <div className="p-4 lg:p-6 max-w-[1500px] mx-auto space-y-5">
@@ -177,11 +261,19 @@ export default function Dashboard() {
           <p className="text-gray-500 text-sm mt-0.5">Your financial sandbox</p>
         </div>
         <div className="flex items-center gap-2">
-          {simFetching && (
+          {simFetching ? (
             <span className="flex items-center gap-1.5 text-xs text-gray-500">
               <RefreshCw size={12} className="animate-spin" /> Simulating…
             </span>
-          )}
+          ) : activePlan_id ? (
+            <button
+              onClick={() => refetchSim()}
+              className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1.5 rounded hover:bg-gray-800"
+              title="Re-run simulation"
+            >
+              <RefreshCw size={12} /> Refresh
+            </button>
+          ) : null}
           <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
             <Plus size={15} /> New Plan
           </button>
@@ -248,54 +340,125 @@ export default function Dashboard() {
 
           {activePlan && (
             <>
+              {/* ── Time-travel context bar ── */}
+              {firstSnap && (
+                <div className="flex items-center gap-3 min-h-[24px]">
+                  {isTimeTravel ? (
+                    <>
+                      <span className="text-xs text-gray-500">Viewing</span>
+                      <span className="text-xs font-semibold text-white bg-gray-800 px-2 py-0.5 rounded">
+                        {activeYear}
+                      </span>
+                      {lockedYear && (
+                        <>
+                          <Lock size={11} className="text-blue-400" />
+                          <span className="text-[10px] text-blue-400">locked</span>
+                          <button
+                            onClick={() => setLockedYear(null)}
+                            className="text-gray-600 hover:text-red-400 transition-colors"
+                            title="Unlock"
+                          >
+                            <X size={12} />
+                          </button>
+                        </>
+                      )}
+                      <span className="text-[10px] text-gray-600 ml-1">
+                        {hoveredYear && !lockedYear ? '— click chart to lock' : ''}
+                      </span>
+                      <button
+                        onClick={() => { setLockedYear(null); setHoveredYear(null) }}
+                        className="text-[10px] text-gray-600 hover:text-gray-400 ml-auto"
+                      >
+                        ← Back to now
+                      </button>
+                    </>
+                  ) : firstSnap ? (
+                    <span className="text-[10px] text-gray-600">
+                      Hover the overview chart to explore any year · click to lock
+                    </span>
+                  ) : null}
+                </div>
+              )}
+
               {/* ── Stat strip ── */}
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                <StatCard
-                  label="Monthly Net Income"
-                  value={fmt(firstSnap?.net_income)}
-                  sub={firstSnap ? `Gross: ${fmt(firstSnap.gross_income)}` : undefined}
-                  icon={<DollarSign size={14} />}
-                  accent="green"
-                />
-                <StatCard
-                  label="Free Cash Flow"
-                  value={fmt(firstSnap?.cash_flow)}
-                  sub="After all obligations"
-                  icon={<Wallet size={14} />}
-                  accent={firstSnap && firstSnap.cash_flow >= 0 ? 'blue' : 'red'}
-                />
-                <StatCard
-                  label="Monthly Debt Service"
-                  value={fmt(firstSnap?.total_debt_payments)}
-                  sub={firstSnap ? `Interest: ${fmt(firstSnap.total_interest_paid)}/mo` : undefined}
-                  icon={<CreditCard size={14} />}
-                  accent="orange"
-                />
-                <StatCard
-                  label="Debt-Free Date"
-                  value={debtFreeSnap ? calLabel(debtFreeSnap.calendar_month, debtFreeSnap.year) : 'Not in 30yr'}
-                  sub={debtFreeSnap ? `Total interest: ${fmtShort(totalInterestPaid)}` : undefined}
-                  icon={<Calendar size={14} />}
-                  accent={debtFreeSnap ? 'green' : 'red'}
-                />
-                <StatCard
-                  label={hasPSLF ? 'PSLF Progress' : 'Total Debt Now'}
-                  value={hasPSLF ? `${startingPSLFPayments}/120` : fmt(firstSnap?.total_debt)}
-                  sub={hasPSLF
-                    ? (pslfSnap ? `Forgiveness: ${calLabel(pslfSnap.calendar_month, pslfSnap.year)}` : 'No forgiveness in 30yr')
-                    : undefined
-                  }
-                  icon={<TrendingUp size={14} />}
-                  accent={hasPSLF ? 'purple' : 'red'}
-                />
-                <StatCard
-                  label="Investments (30yr)"
-                  value={fmtShort(lastSnap?.total_investments)}
-                  sub={lastSnap ? `Net worth: ${fmtShort(lastSnap.net_worth)}` : undefined}
-                  icon={<Landmark size={14} />}
-                  accent="green"
-                />
-              </div>
+              {firstSnap && (
+                <div className={`grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 transition-all ${
+                  isTimeTravel ? 'ring-1 ring-gray-700/50 rounded-xl p-1 -m-1' : ''
+                }`}>
+                  {/* Flow cards: monthly in default view, annual when time-travelling */}
+                  <StatCard
+                    label={isTimeTravel ? `Annual Net Income (${activeYear})` : 'Monthly Net Income'}
+                    value={isTimeTravel ? fmt(annualForYear?.netIncome) : fmt(firstSnap.net_income)}
+                    sub={isTimeTravel
+                      ? `Gross: ${fmt(annualForYear?.grossIncome)}`
+                      : `Gross: ${fmt(firstSnap.gross_income)}/mo`
+                    }
+                    icon={<DollarSign size={14} />}
+                    accent="green"
+                  />
+                  <StatCard
+                    label={isTimeTravel ? `Annual Cash Flow (${activeYear})` : 'Monthly Cash Flow'}
+                    value={isTimeTravel ? fmt(annualForYear?.cashFlow) : fmt(firstSnap.cash_flow)}
+                    sub={isTimeTravel ? undefined : 'After all obligations'}
+                    icon={<Wallet size={14} />}
+                    accent={(isTimeTravel ? (annualForYear?.cashFlow ?? 0) : firstSnap.cash_flow) >= 0 ? 'blue' : 'red'}
+                  />
+                  <StatCard
+                    label={isTimeTravel ? `Annual Debt Service (${activeYear})` : 'Monthly Debt Service'}
+                    value={isTimeTravel ? fmt(annualForYear?.debtPayments) : fmt(firstSnap.total_debt_payments)}
+                    sub={isTimeTravel
+                      ? `Interest: ${fmt(annualForYear?.interestPaid)}/yr`
+                      : `Interest: ${fmt(firstSnap.total_interest_paid)}/mo`
+                    }
+                    icon={<CreditCard size={14} />}
+                    accent="orange"
+                    dimmed={isPastDebtFree && (annualForYear?.debtPayments ?? 0) === 0}
+                  />
+                  {/* Milestone: always from full simulation */}
+                  <StatCard
+                    label="Debt-Free Date"
+                    value={debtFreeSnap ? calLabel(debtFreeSnap.calendar_month, debtFreeSnap.year) : (hasDebts ? 'Not in 30yr' : 'No debt')}
+                    sub={debtFreeSnap ? `Total interest: ${fmtShort(totalInterestPaid)}` : undefined}
+                    icon={<Calendar size={14} />}
+                    accent={debtFreeSnap ? 'green' : (hasDebts ? 'red' : 'default')}
+                    dimmed={isTimeTravel}
+                  />
+                  {/* PSLF (when applicable) or total debt */}
+                  {hasPSLF ? (
+                    <StatCard
+                      label={isTimeTravel ? `PSLF Progress (${activeYear})` : 'PSLF Progress'}
+                      value={isTimeTravel
+                        ? `${annualForYear?.pslfCount ?? startingPSLFPayments}/120`
+                        : `${startingPSLFPayments}/120`
+                      }
+                      sub={
+                        isTimeTravel && (annualForYear?.pslfCount ?? 0) >= 120
+                          ? '✓ Forgiven'
+                          : pslfSnap
+                            ? `Forgiveness: ${calLabel(pslfSnap.calendar_month, pslfSnap.year)}`
+                            : 'No forgiveness in 30yr'
+                      }
+                      icon={<TrendingUp size={14} />}
+                      accent={isTimeTravel && (annualForYear?.pslfCount ?? 0) >= 120 ? 'green' : 'purple'}
+                    />
+                  ) : (
+                    <StatCard
+                      label={isTimeTravel ? `Total Debt (${activeYear})` : 'Total Debt Now'}
+                      value={isTimeTravel ? fmt(annualForYear?.totalDebt) : fmt(firstSnap.total_debt)}
+                      icon={<TrendingUp size={14} />}
+                      accent={(isTimeTravel ? (annualForYear?.totalDebt ?? 1) : firstSnap.total_debt) > 0 ? 'red' : 'green'}
+                    />
+                  )}
+                  {/* Investments: stock value (end-of-year or 30yr) */}
+                  <StatCard
+                    label={isTimeTravel ? `Investments (${activeYear})` : 'Investments (30yr)'}
+                    value={isTimeTravel ? fmtShort(annualForYear?.totalInvestments) : fmtShort(lastSnap?.total_investments)}
+                    sub={`Net worth: ${fmtShort(isTimeTravel ? annualForYear?.netWorth : lastSnap?.net_worth)}`}
+                    icon={<Landmark size={14} />}
+                    accent="green"
+                  />
+                </div>
+              )}
 
               {/* ── Main layout ── */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
@@ -303,7 +466,7 @@ export default function Dashboard() {
                 {/* LEFT: Charts + Agent */}
                 <div className="lg:col-span-2 space-y-5">
 
-                  {/* Chart card with view toggle */}
+                  {/* Chart card */}
                   <div className="card">
                     <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                       <div className="flex gap-1 flex-wrap">
@@ -312,7 +475,7 @@ export default function Dashboard() {
                             key={v.key}
                             onClick={() => setChartView(v.key)}
                             className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                              chartView === v.key
+                              validView === v.key
                                 ? 'bg-gray-700 text-white'
                                 : 'text-gray-500 hover:text-gray-300'
                             }`}
@@ -332,91 +495,123 @@ export default function Dashboard() {
                       </div>
                     ) : (
                       <>
-                        {chartView === 'overview' && (
+                        {validView === 'overview' && (
                           <FinancialOverviewChart
                             snapshots={snapshots}
                             lifeEvents={activePlan.life_events ?? []}
                             height={300}
+                            comparisonSnapshots={comparisonData?.plan_b_snapshots}
+                            comparisonName={comparePlan?.name}
+                            whatIfSnapshots={whatIfSnapshots ?? undefined}
+                            accounts={activePlan.investment_accounts ?? []}
+                            lockedYear={lockedYear}
+                            onHoverYear={handleChartHover}
+                            onClickYear={handleChartClick}
                           />
                         )}
-                        {chartView === 'debt' && (
-                          <>
-                            {hasDebts ? (
-                              <DebtTrajectoryChart
-                                snapshots={snapshots}
-                                debts={activePlan.debt_accounts}
-                                height={300}
-                              />
-                            ) : (
-                              <div className="h-64 flex items-center justify-center text-gray-600 text-sm">
-                                No debt accounts — add debts to track payoff trajectories
-                              </div>
-                            )}
-                          </>
+                        {validView === 'debt' && (
+                          <DebtTrajectoryChart
+                            snapshots={snapshots}
+                            debts={activePlan.debt_accounts}
+                            height={300}
+                          />
                         )}
-                        {chartView === 'cashflow' && (
+                        {validView === 'cashflow' && (
                           <div>
                             <p className="text-xs text-gray-500 mb-3">Monthly budget composition at key years</p>
                             <CashFlowEvolution snapshots={snapshots} />
+                          </div>
+                        )}
+                        {validView === 'savings' && (
+                          <div>
+                            <p className="text-xs text-gray-500 mb-3">Balance per account over time</p>
+                            <SavingsBreakdownChart
+                              snapshots={snapshots}
+                              accounts={activePlan.investment_accounts ?? []}
+                              height={300}
+                            />
+                          </div>
+                        )}
+                        {validView === 'table' && (
+                          <AnnualSummaryTable snapshots={snapshots} />
+                        )}
+                        {validView === 'repayment' && (
+                          repaymentData ? (
+                            <RepaymentComparisonPanel
+                              plans={repaymentData.plans}
+                              startYear={activePlan.simulation_config.start_year}
+                              startMonth={activePlan.simulation_config.start_month}
+                            />
+                          ) : (
+                            <div className="h-48 flex items-center justify-center text-gray-600 text-sm">
+                              Loading repayment comparison…
+                            </div>
+                          )
+                        )}
+                        {validView === 'comparison' && (
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs text-gray-500">Compare with:</span>
+                              <select
+                                value={comparePlanId ?? ''}
+                                onChange={e => setComparePlanId(e.target.value || null)}
+                                className="input text-xs flex-1"
+                              >
+                                <option value="">— select a plan —</option>
+                                {plans.filter(p => p.id !== activePlan_id).map(p => (
+                                  <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            {comparePlanId && comparisonData ? (
+                              <ComparisonPanel
+                                deltas={comparisonData.full_deltas}
+                                planAName={activePlan.name}
+                                planBName={comparePlan?.name ?? 'Plan B'}
+                              />
+                            ) : (
+                              <div className="h-48 flex items-center justify-center text-gray-600 text-sm">
+                                {comparePlanId ? 'Loading comparison…' : 'Select a second plan above to compare'}
+                              </div>
+                            )}
                           </div>
                         )}
                       </>
                     )}
                   </div>
 
+                  {/* Sensitivity sliders */}
+                  {simResult && (
+                    <SensitivityPanel
+                      planId={activePlan.id}
+                      simParams={{ filing_status: 'mfj', household_size: 2 }}
+                      onResult={snaps => {
+                        setWhatIfSnapshots(snaps)
+                        if (snaps && validView !== 'overview') setChartView('overview')
+                      }}
+                    />
+                  )}
+
                   {/* Natural language builder */}
                   <SimpleAgent planId={activePlan.id} />
-
-                  {/* Budget insight callouts */}
-                  {firstSnap && (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      {[
-                        {
-                          label: 'Taxes',
-                          value: fmt(firstSnap.taxes_paid),
-                          pct: firstSnap.gross_income > 0 ? ((firstSnap.taxes_paid / firstSnap.gross_income) * 100).toFixed(0) : '0',
-                          color: 'text-red-400',
-                          bg: 'bg-red-900/10 border-red-900/30',
-                        },
-                        {
-                          label: 'Expenses',
-                          value: fmt(firstSnap.total_expenses),
-                          pct: firstSnap.gross_income > 0 ? ((firstSnap.total_expenses / firstSnap.gross_income) * 100).toFixed(0) : '0',
-                          color: 'text-orange-400',
-                          bg: 'bg-orange-900/10 border-orange-900/30',
-                        },
-                        {
-                          label: 'Debt Service',
-                          value: fmt(firstSnap.total_debt_payments),
-                          pct: firstSnap.gross_income > 0 ? ((firstSnap.total_debt_payments / firstSnap.gross_income) * 100).toFixed(0) : '0',
-                          color: 'text-purple-400',
-                          bg: 'bg-purple-900/10 border-purple-900/30',
-                        },
-                        {
-                          label: 'Investing',
-                          value: fmt(firstSnap.total_invest_contrib),
-                          pct: firstSnap.gross_income > 0 ? ((firstSnap.total_invest_contrib / firstSnap.gross_income) * 100).toFixed(0) : '0',
-                          color: 'text-emerald-400',
-                          bg: 'bg-emerald-900/10 border-emerald-900/30',
-                        },
-                      ].map(item => (
-                        <div key={item.label} className={`rounded-xl border p-3 ${item.bg}`}>
-                          <p className="text-xs text-gray-500 mb-1">{item.label} / mo</p>
-                          <p className={`text-sm font-semibold ${item.color}`}>{item.value}</p>
-                          <p className="text-[11px] text-gray-600 mt-0.5">{item.pct}% of gross</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
 
-                {/* RIGHT: Debt Freedom + Plan Editor */}
+                {/* RIGHT: sidebar panels + Plan editor */}
                 <div className="lg:col-span-1 space-y-5">
 
-                  {/* Debt & PSLF panel */}
-                  {simResult && (
+                  {/* Debt & PSLF panel — only when there are debts */}
+                  {simResult && hasDebts && (
                     <DebtFreedomPanel snapshots={snapshots} plan={activePlan} />
                   )}
+
+                  {/* Savings goals */}
+                  {simResult?.goal_progress?.length ? (
+                    <GoalsPanel
+                      goals={simResult.goal_progress}
+                      startYear={activePlan.simulation_config.start_year}
+                      startMonth={activePlan.simulation_config.start_month}
+                    />
+                  ) : null}
 
                   {/* Plan elements editor */}
                   <div className="card flex flex-col">
@@ -425,7 +620,6 @@ export default function Dashboard() {
                       <span className="text-xs px-2 py-1 bg-gray-800 text-gray-400 rounded">Edit sandbox</span>
                     </div>
 
-                    {/* Tab strip */}
                     <div className="flex gap-0.5 border-b border-gray-800 overflow-x-auto py-1 mb-3 hide-scrollbar">
                       {tabs.map(t => (
                         <button

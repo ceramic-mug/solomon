@@ -115,13 +115,13 @@ export default function Scenarios() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800">
-                {comparison.deltas.map(d => (
+                {comparison.full_deltas.map(d => (
                   <tr key={d.year}>
                     <td className="py-3 text-gray-300">Year {d.year}</td>
                     <td className="py-3 text-right text-blue-300">{fmt(d.plan_a_net_worth)}</td>
                     <td className="py-3 text-right text-amber-300">{fmt(d.plan_b_net_worth)}</td>
-                    <td className={`py-3 text-right font-medium ${d.delta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {d.delta >= 0 ? '+' : ''}{fmt(d.delta)}
+                    <td className={`py-3 text-right font-medium ${d.net_worth_delta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {d.net_worth_delta >= 0 ? '+' : ''}{fmt(d.net_worth_delta)}
                     </td>
                   </tr>
                 ))}

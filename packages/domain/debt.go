@@ -20,9 +20,10 @@ type RepaymentPlan string
 
 const (
 	RepaymentPlanStandard RepaymentPlan = "standard" // Fixed amortized payment
-	RepaymentPlanIDR      RepaymentPlan = "idr"      // Income-Driven Repayment (10% discretionary income)
-	RepaymentPlanPAYE     RepaymentPlan = "paye"     // Pay As You Earn (10%, lower cap)
-	RepaymentPlanSAVE     RepaymentPlan = "save"     // Saving on a Valuable Education (5% for undergrad)
+	RepaymentPlanIDR      RepaymentPlan = "idr"      // Income-Driven Repayment (alias for PAYE behavior)
+	RepaymentPlanPAYE     RepaymentPlan = "paye"     // Pay As You Earn (10%, capped at Standard payment)
+	RepaymentPlanSAVE     RepaymentPlan = "save"     // Saving on a Valuable Education (10% at 225% poverty, no cap)
+	RepaymentPlanIBRNew   RepaymentPlan = "ibr_new"  // IBR New Borrowers (10% at 150% poverty, no cap)
 )
 
 // DebtAccount represents a single loan or credit liability within a plan.
@@ -42,6 +43,10 @@ type DebtAccount struct {
 	// PSLF tracking — applies to student loans at qualifying employers
 	PSLFEligible     bool `json:"pslf_eligible"`
 	PSLFPaymentsMade int  `json:"pslf_payments_made"` // qualifying payments already made before plan start
+
+	// Mortgage-specific fields (only meaningful when Type == DebtTypeMortgage)
+	PropertyValue    float64 `json:"property_value"`    // current estimated property value
+	AppreciationRate float64 `json:"appreciation_rate"` // annual appreciation rate, e.g. 0.03
 }
 
 // MonthlyInterest returns the interest that accrues in one month on a given balance.

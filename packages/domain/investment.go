@@ -12,9 +12,11 @@ const (
 	AccountTypeTradIRA   AccountType = "trad_ira"   // Traditional IRA — pre-tax (deductibility limits apply)
 	AccountTypeRothIRA   AccountType = "roth_ira"   // Roth IRA (direct or via backdoor)
 	AccountTypeHSA       AccountType = "hsa"        // Health Savings Account — triple tax advantage
-	AccountTypeTaxable   AccountType = "taxable"    // Standard brokerage account
-	AccountType529       AccountType = "529"         // 529 education savings
-	AccountTypeCash      AccountType = "cash"        // Emergency fund / HYSA
+	AccountTypeTaxable      AccountType = "taxable"       // Standard brokerage account
+	AccountType529          AccountType = "529"           // 529 education savings
+	AccountTypeCash         AccountType = "cash"          // Emergency fund / HYSA
+	AccountTypeSavings      AccountType = "savings"       // High-yield savings account
+	AccountTypeMoneyMarket  AccountType = "money_market"  // Money market account
 )
 
 // AssetAllocation defines the portfolio split across asset classes.
@@ -37,6 +39,10 @@ type InvestmentAccount struct {
 	EmployerMatchCap float64         `json:"employer_match_cap"` // max salary fraction matched, e.g. 0.04
 	AssetAllocation  AssetAllocation `json:"asset_allocation"`
 	StartMonth       int             `json:"start_month"`
+
+	// Savings goal tracking (optional)
+	GoalTarget float64 `json:"goal_target"` // target balance; 0 = no goal
+	GoalLabel  string  `json:"goal_label"`  // e.g. "Emergency Fund", "College - Emma"
 }
 
 // IRS annual contribution limits (2026). Kept here so the simulation engine

@@ -7,6 +7,7 @@ import {
   createInvestment, updateInvestment, deleteInvestment,
   createEvent, updateEvent, deleteEvent,
   createGiving, updateGiving, deleteGiving,
+  estimateSocialSecurity,
 } from '../../api/client'
 import type {
   Plan, IncomeStream, Expense, DebtAccount,
@@ -161,7 +162,7 @@ export function IncomeForm({ planId, onClose, initialData }: {
       }
       return createIncome(planId, data)
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', planId] }); onClose() },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', planId] }); qc.invalidateQueries({ queryKey: ['simulate', planId] }); onClose() },
   })
 
   const incomeTypes: { value: IncomeType; label: string }[] = [
@@ -205,10 +206,31 @@ export function IncomeForm({ planId, onClose, initialData }: {
 
 export function IncomeTab({ plan }: { plan: Plan }) {
   const [modal, setModal] = useState<{ type: 'add' | 'edit' | 'copy'; data?: Partial<IncomeStream> } | null>(null)
+  const [ssAge, setSsAge] = useState(27)
+  const [ssModal, setSsModal] = useState(false)
   const qc = useQueryClient()
   const delMut = useMutation({
     mutationFn: (id: string) => deleteIncome(plan.id, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['plan', plan.id] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', plan.id] }); qc.invalidateQueries({ queryKey: ['simulate', plan.id] }) },
+  })
+  const ssMut = useMutation({
+    mutationFn: async () => {
+      const est = await estimateSocialSecurity(plan.id, ssAge, 67)
+      return createIncome(plan.id, {
+        name: 'Social Security',
+        type: 'other',
+        tax_category: 'w2',
+        amount: Math.round(est.monthly_benefit),
+        growth_rate: 0.02,
+        start_month: est.retirement_month,
+        end_month: undefined,
+      })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['plan', plan.id] })
+      qc.invalidateQueries({ queryKey: ['simulate', plan.id] })
+      setSsModal(false)
+    },
   })
 
   return (
@@ -240,13 +262,46 @@ export function IncomeTab({ plan }: { plan: Plan }) {
       {(plan.income_streams ?? []).length === 0 && (
         <p className="text-gray-600 text-sm py-8 text-center">No income streams yet. Add your residency salary to get started.</p>
       )}
-      <button onClick={() => setModal({ type: 'add' })} className="btn-secondary w-full text-sm">+ Add income stream</button>
+      <div className="flex gap-2">
+        <button onClick={() => setModal({ type: 'add' })} className="btn-secondary flex-1 text-sm">+ Add income stream</button>
+        <button
+          onClick={() => setSsModal(true)}
+          className="btn-secondary text-sm text-purple-400 border-purple-800/40 hover:border-purple-600"
+          title="Add Social Security estimate"
+        >
+          + SS Estimate
+        </button>
+      </div>
       {modal && (
-        <Modal 
-          title={modal.type === 'edit' ? 'Edit Income Stream' : modal.type === 'copy' ? 'Copy Income Stream' : 'Add Income Stream'} 
+        <Modal
+          title={modal.type === 'edit' ? 'Edit Income Stream' : modal.type === 'copy' ? 'Copy Income Stream' : 'Add Income Stream'}
           onClose={() => setModal(null)}
         >
           <IncomeForm planId={plan.id} onClose={() => setModal(null)} initialData={modal.data} />
+        </Modal>
+      )}
+      {ssModal && (
+        <Modal title="Add Social Security Estimate" onClose={() => setSsModal(false)}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-400">
+              Estimates your monthly Social Security benefit based on projected career earnings in this plan.
+            </p>
+            <Field label="Your Current Age">
+              <Num value={ssAge} onChange={setSsAge} placeholder="27" min={18} max={66} />
+            </Field>
+            <p className="text-xs text-gray-600">Retirement age defaults to 67. The estimated benefit will be added as an income stream starting at your retirement month.</p>
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={() => setSsModal(false)} className="btn-secondary flex-1">Cancel</button>
+              <button
+                type="button"
+                className="btn-primary flex-1"
+                disabled={ssMut.isPending}
+                onClick={() => ssMut.mutate()}
+              >
+                {ssMut.isPending ? 'Estimating…' : 'Add SS Income'}
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
     </div>
@@ -283,7 +338,7 @@ export function ExpenseForm({ planId, onClose, initialData }: {
       }
       return createExpense(planId, data)
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', planId] }); onClose() },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', planId] }); qc.invalidateQueries({ queryKey: ['simulate', planId] }); onClose() },
   })
 
   const cats: { value: ExpenseCategory; label: string }[] = [
@@ -332,7 +387,7 @@ export function ExpensesTab({ plan }: { plan: Plan }) {
   const qc = useQueryClient()
   const delMut = useMutation({
     mutationFn: (id: string) => deleteExpense(plan.id, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['plan', plan.id] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', plan.id] }); qc.invalidateQueries({ queryKey: ['simulate', plan.id] }) },
   })
 
   return (
@@ -395,6 +450,8 @@ export function DebtForm({ planId, onClose, initialData }: {
   const [repayment, setRepayment] = useState<RepaymentPlan>(initialData?.repayment_plan ?? 'standard')
   const [pslfEligible, setPslfEligible] = useState(initialData?.pslf_eligible ?? false)
   const [pslfPayments, setPslfPayments] = useState(initialData?.pslf_payments_made ?? 0)
+  const [propertyValue, setPropertyValue] = useState(initialData?.property_value ?? 0)
+  const [appreciationRate, setAppreciationRate] = useState((initialData?.appreciation_rate ?? 0.03) * 100)
 
   const mut = useMutation({
     mutationFn: () => {
@@ -409,13 +466,15 @@ export function DebtForm({ planId, onClose, initialData }: {
         repayment_plan: repayment,
         pslf_eligible: pslfEligible,
         pslf_payments_made: pslfPayments,
+        property_value: type === 'mortgage' ? propertyValue : 0,
+        appreciation_rate: type === 'mortgage' ? appreciationRate / 100 : 0,
       }
       if (initialData?.id) {
         return updateDebt(planId, initialData.id, { ...data, id: initialData.id, plan_id: planId })
       }
       return createDebt(planId, data)
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', planId] }); onClose() },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', planId] }); qc.invalidateQueries({ queryKey: ['simulate', planId] }); onClose() },
   })
 
   const debtTypes: { value: DebtType; label: string }[] = [
@@ -429,8 +488,9 @@ export function DebtForm({ planId, onClose, initialData }: {
   const repaymentPlans: { value: RepaymentPlan; label: string }[] = [
     { value: 'standard', label: 'Standard (10yr)' },
     { value: 'idr', label: 'IDR (Income-Driven)' },
-    { value: 'paye', label: 'PAYE' },
-    { value: 'save', label: 'SAVE' },
+    { value: 'paye', label: 'PAYE (10%, capped)' },
+    { value: 'save', label: 'SAVE (10%, 225% poverty)' },
+    { value: 'ibr_new', label: 'IBR New (10%, no cap)' },
   ]
 
   return (
@@ -460,6 +520,20 @@ export function DebtForm({ planId, onClose, initialData }: {
           </Field>
         )}
       </div>
+      {type === 'mortgage' && (
+        <div className="rounded-lg border border-amber-800/30 bg-amber-900/5 p-3 space-y-3">
+          <p className="text-xs font-medium text-amber-400">Mortgage Asset Tracking</p>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Current Property Value ($)">
+              <Num value={propertyValue} onChange={setPropertyValue} placeholder="400000" min={0} />
+            </Field>
+            <Field label="Annual Appreciation (%)">
+              <Num value={appreciationRate} onChange={setAppreciationRate} placeholder="3" min={0} max={20} step={0.1} />
+            </Field>
+          </div>
+          <p className="text-[10px] text-gray-600">Home equity will be included in your net worth projection.</p>
+        </div>
+      )}
       <SaveCancel onCancel={onClose} isPending={mut.isPending} />
     </form>
   )
@@ -470,7 +544,7 @@ export function DebtsTab({ plan }: { plan: Plan }) {
   const qc = useQueryClient()
   const delMut = useMutation({
     mutationFn: (id: string) => deleteDebt(plan.id, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['plan', plan.id] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', plan.id] }); qc.invalidateQueries({ queryKey: ['simulate', plan.id] }) },
   })
 
   return (
@@ -535,6 +609,8 @@ export function InvestmentForm({ planId, onClose, initialData }: {
   const [stockPct, setStockPct] = useState((initialData?.asset_allocation?.stock_pct ?? 0.9) * 100)
   const [bondPct, setBondPct] = useState((initialData?.asset_allocation?.bond_pct ?? 0.1) * 100)
   const [startMonth, setStartMonth] = useState(initialData?.start_month ?? 0)
+  const [goalTarget, setGoalTarget] = useState(initialData?.goal_target ?? 0)
+  const [goalLabel, setGoalLabel] = useState(initialData?.goal_label ?? '')
 
   const mut = useMutation({
     mutationFn: () => {
@@ -549,13 +625,15 @@ export function InvestmentForm({ planId, onClose, initialData }: {
           cash_pct: Math.max(0, 1 - stockPct / 100 - bondPct / 100),
         },
         start_month: startMonth,
+        goal_target: goalTarget,
+        goal_label: goalLabel,
       }
       if (initialData?.id) {
         return updateInvestment(planId, initialData.id, { ...data, id: initialData.id, plan_id: planId })
       }
       return createInvestment(planId, data)
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', planId] }); onClose() },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', planId] }); qc.invalidateQueries({ queryKey: ['simulate', planId] }); onClose() },
   })
 
   const accountTypes: { value: AccountType; label: string }[] = [
@@ -567,7 +645,9 @@ export function InvestmentForm({ planId, onClose, initialData }: {
     { value: 'hsa', label: 'HSA' },
     { value: 'taxable', label: 'Taxable Brokerage' },
     { value: '529', label: '529 (Education)' },
-    { value: 'cash', label: 'Cash / Savings' },
+    { value: 'cash', label: 'Cash / HYSA' },
+    { value: 'savings', label: 'High-Yield Savings' },
+    { value: 'money_market', label: 'Money Market' },
   ]
 
   return (
@@ -593,6 +673,18 @@ export function InvestmentForm({ planId, onClose, initialData }: {
         <p className="text-xs text-gray-600 mt-1">Cash: {Math.max(0, 100 - stockPct - bondPct)}%</p>
       </div>
       <Field label="Start Month"><Num value={startMonth} onChange={setStartMonth} placeholder="0" min={0} /></Field>
+      <div className="rounded-lg border border-gray-700/40 bg-gray-800/20 p-3 space-y-3">
+        <p className="text-xs font-medium text-gray-400">Savings Goal (optional)</p>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Goal Label">
+            <Str value={goalLabel} onChange={setGoalLabel} placeholder="Emergency Fund" />
+          </Field>
+          <Field label="Target Balance ($)">
+            <Num value={goalTarget} onChange={setGoalTarget} placeholder="0" min={0} />
+          </Field>
+        </div>
+        <p className="text-[10px] text-gray-600">Set a target to track progress in the Goals panel.</p>
+      </div>
       <SaveCancel onCancel={onClose} isPending={mut.isPending} />
     </form>
   )
@@ -603,7 +695,7 @@ export function InvestmentsTab({ plan }: { plan: Plan }) {
   const qc = useQueryClient()
   const delMut = useMutation({
     mutationFn: (id: string) => deleteInvestment(plan.id, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['plan', plan.id] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', plan.id] }); qc.invalidateQueries({ queryKey: ['simulate', plan.id] }) },
   })
 
   return (
@@ -671,7 +763,7 @@ export function EventForm({ planId, onClose, initialData }: {
       }
       return createEvent(planId, data)
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', planId] }); onClose() },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', planId] }); qc.invalidateQueries({ queryKey: ['simulate', planId] }); onClose() },
   })
 
   const eventTypes: { value: EventType; label: string }[] = [
@@ -700,7 +792,7 @@ export function EventsTab({ plan }: { plan: Plan }) {
   const qc = useQueryClient()
   const delMut = useMutation({
     mutationFn: (id: string) => deleteEvent(plan.id, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['plan', plan.id] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', plan.id] }); qc.invalidateQueries({ queryKey: ['simulate', plan.id] }) },
   })
   const events = (plan.life_events ?? []).sort((a, b) => a.month - b.month)
 
@@ -773,7 +865,7 @@ export function GivingForm({ planId, onClose, initialData }: {
       }
       return createGiving(planId, data)
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', planId] }); onClose() },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', planId] }); qc.invalidateQueries({ queryKey: ['simulate', planId] }); onClose() },
   })
 
   const basisOpts: { value: GivingBasis; label: string }[] = [
@@ -799,7 +891,7 @@ export function GivingTab({ plan }: { plan: Plan }) {
   const qc = useQueryClient()
   const delMut = useMutation({
     mutationFn: (id: string) => deleteGiving(plan.id, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['plan', plan.id] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', plan.id] }); qc.invalidateQueries({ queryKey: ['simulate', plan.id] }) },
   })
 
   return (

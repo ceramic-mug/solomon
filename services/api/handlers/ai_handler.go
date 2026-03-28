@@ -404,6 +404,10 @@ func (h *AIHandler) executeTool(
 			}
 		}
 		principal := getFloat(args, "principal")
+		appreciationRate := getFloat(args, "appreciation_rate")
+		if appreciationRate == 0 {
+			appreciationRate = 0.03
+		}
 		debt := domain.DebtAccount{
 			ID:                uuid.New(),
 			PlanID:            id,
@@ -418,6 +422,8 @@ func (h *AIHandler) executeTool(
 			RepaymentPlan:     domain.RepaymentPlan(getString(args, "repayment_plan")),
 			PSLFEligible:      getBool(args, "pslf_eligible"),
 			PSLFPaymentsMade:  int(getFloat(args, "pslf_payments_made")),
+			PropertyValue:     getFloat(args, "property_value"),
+			AppreciationRate:  appreciationRate,
 		}
 		created, err := h.repo.CreateDebt(ctx, debt)
 		if err != nil {
@@ -449,6 +455,8 @@ func (h *AIHandler) executeTool(
 			MonthlyContrib: getFloat(args, "monthly_contrib"),
 			EmployerMatch:  getFloat(args, "employer_match") / 100,
 			StartMonth:     int(getFloat(args, "start_month")),
+			GoalTarget:     getFloat(args, "goal_target"),
+			GoalLabel:      getString(args, "goal_label"),
 			AssetAllocation: domain.AssetAllocation{
 				StockPct: stockPct,
 				BondPct:  bondPct,
@@ -523,6 +531,38 @@ func (h *AIHandler) executeTool(
 			}
 		}
 		return nil, fmt.Errorf("income stream not found")
+
+	case "add_giving":
+		id := planID
+		if s, ok := args["plan_id"].(string); ok {
+			if p, err := uuid.Parse(s); err == nil {
+				id = p
+			}
+		}
+		basis := domain.GivingBasis(getString(args, "basis"))
+		if basis == "" {
+			basis = domain.GivingBasisGross
+		}
+		g := domain.GivingTarget{
+			ID:         uuid.New(),
+			PlanID:     id,
+			Name:       getString(args, "name"),
+			Basis:      basis,
+			Percentage: getFloat(args, "percentage"),
+			StartMonth: int(getFloat(args, "start_month")),
+		}
+		if fa, ok := args["fixed_amount"].(float64); ok && fa > 0 {
+			g.FixedAmount = &fa
+		}
+		if em, ok := args["end_month"].(float64); ok {
+			n := int(em)
+			g.EndMonth = &n
+		}
+		created, err := h.repo.CreateGivingTarget(ctx, g)
+		if err != nil {
+			return nil, err
+		}
+		return created, nil
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
@@ -662,40 +702,44 @@ func solomonToolDefs() *genai.Tool {
 			},
 			{
 				Name:        "add_debt",
-				Description: "Add a debt account (student loan, mortgage, auto, etc.) to a plan.",
+				Description: "Add a debt account (student loan, mortgage, auto, etc.) to a plan. For mortgages, always set property_value so home equity is tracked correctly.",
 				Parameters: &genai.Schema{
 					Type: genai.TypeObject,
 					Properties: map[string]*genai.Schema{
-						"plan_id":          str("UUID of the plan"),
-						"name":             str("Debt name"),
-						"type":             str("Debt type: student_loan, mortgage, auto, credit_card, personal, other"),
-						"principal":        num("Original principal balance in dollars"),
-						"interest_rate":    num("Annual interest rate as percentage (e.g. 6.5 for 6.5%)"),
-						"min_payment":      num("Minimum monthly payment (0 for auto-calculated)"),
-						"extra_payment":    num("Extra monthly payment beyond minimum"),
-						"start_month":      num("Month index when repayment starts"),
-						"repayment_plan":   str("Repayment plan: standard, idr, paye, save"),
-						"pslf_eligible":    boo("Whether this loan qualifies for PSLF"),
+						"plan_id":            str("UUID of the plan"),
+						"name":               str("Debt name"),
+						"type":               str("Debt type: student_loan, mortgage, auto, credit_card, personal, other"),
+						"principal":          num("Original loan balance in dollars (for mortgages: the loan amount, not the home price)"),
+						"interest_rate":      num("Annual interest rate as percentage (e.g. 6.5 for 6.5%)"),
+						"min_payment":        num("Minimum monthly payment (0 for auto-calculated)"),
+						"extra_payment":      num("Extra monthly payment beyond minimum"),
+						"start_month":        num("Month index when repayment starts"),
+						"repayment_plan":     str("Repayment plan: standard, idr, paye, save, ibr_new"),
+						"pslf_eligible":      boo("Whether this loan qualifies for PSLF"),
 						"pslf_payments_made": num("Number of PSLF qualifying payments already made (0-120)"),
+						"property_value":     num("MORTGAGE ONLY: current estimated market value of the property in dollars (e.g. 500000). Required for home equity tracking."),
+						"appreciation_rate":  num("MORTGAGE ONLY: annual property appreciation rate as decimal (e.g. 0.03 for 3%). Defaults to 0.03 if omitted."),
 					},
 					Required: []string{"name", "type", "principal", "interest_rate"},
 				},
 			},
 			{
 				Name:        "add_investment",
-				Description: "Add an investment account (401k, Roth IRA, HSA, brokerage, etc.) to a plan.",
+				Description: "Add an investment or savings account to a plan. Use type 'savings' or 'money_market' for emergency funds, down payment accounts, or any named savings goal. Use retirement/brokerage types for investment accounts.",
 				Parameters: &genai.Schema{
 					Type: genai.TypeObject,
 					Properties: map[string]*genai.Schema{
 						"plan_id":        str("UUID of the plan"),
 						"name":           str("Account name"),
-						"type":           str("Account type: trad_401k, roth_401k, trad_457b, trad_ira, roth_ira, hsa, taxable, 529, cash"),
+						"type":           str("Account type: trad_401k, roth_401k, trad_457b, trad_ira, roth_ira, hsa, taxable, 529, cash, savings, money_market"),
 						"balance":        num("Current balance in dollars"),
 						"monthly_contrib": num("Monthly contribution in dollars"),
 						"employer_match": num("Employer match as percentage of salary (e.g. 4 for 4%)"),
-						"stock_pct":      num("Stock allocation as decimal (e.g. 0.9 for 90%)"),
-						"bond_pct":       num("Bond allocation as decimal (e.g. 0.1 for 10%)"),
+						"stock_pct":      num("Stock allocation as decimal (e.g. 0.9 for 90%). Use 0 for savings/cash accounts."),
+						"bond_pct":       num("Bond allocation as decimal (e.g. 0.1 for 10%). Use 0 for savings/cash accounts."),
 						"start_month":    num("Month index when account starts"),
+						"goal_target":    num("Savings goal target balance in dollars (optional, 0 = no goal). Set this for named goals like emergency fund, down payment, college fund."),
+						"goal_label":     str("Savings goal label shown in dashboard (optional), e.g. 'Emergency Fund', 'Down Payment', 'College - Emma'"),
 					},
 					Required: []string{"name", "type", "monthly_contrib"},
 				},
@@ -732,6 +776,23 @@ func solomonToolDefs() *genai.Tool {
 					Required: []string{"stream_id", "field", "new_value"},
 				},
 			},
+			{
+				Name:        "add_giving",
+				Description: "Add a charitable giving commitment (tithe, donation, church giving, charity pledge, etc.) to a plan. ALWAYS use this tool for giving — never use add_expense for charitable giving.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"plan_id":      str("UUID of the plan"),
+						"name":         str("Giving name, e.g. 'Church Tithe', 'Local Charity', 'Donor-Advised Fund'"),
+						"basis":        str("Income basis: 'gross' (pre-tax) or 'net' (post-tax). Default: gross"),
+						"percentage":   num("Giving as a fraction of income (e.g. 0.10 for 10%). Use this OR fixed_amount."),
+						"fixed_amount": num("Fixed monthly dollar amount (optional, overrides percentage if set)"),
+						"start_month":  num("Month index when giving starts (0 = plan start)"),
+						"end_month":    num("Month index when giving ends (omit for indefinite)"),
+					},
+					Required: []string{"name", "start_month"},
+				},
+			},
 		},
 	}
 }
@@ -744,8 +805,14 @@ func buildSystemPrompt(planJSON string) string {
 You help physicians model complex financial scenarios using tool calls. You have access to tools that can:
 - Fetch and simulate financial plans
 - Fork plans into alternative scenarios ("what if" branches)
-- Add expenses, debts, investment accounts, and life events
+- Add expenses, debts, investment accounts, income streams, giving targets, and life events
 - Compare plans side by side with net worth deltas
+
+## CRITICAL: Tool Classification Rules
+- Giving / charitable giving / tithes / donations / church giving / charity / pledges → ALWAYS use add_giving. NEVER use add_expense for these.
+- Regular living expenses (housing, food, transport, healthcare, etc.) → use add_expense.
+- When in doubt whether something is "giving", ask yourself: is it charitable? If yes, use add_giving.
+- Emergency funds, down payment savings, college funds, vacation funds, or any named savings goal → use add_investment with type "savings" or "money_market", and set goal_target + goal_label so it appears in the Goals tracker.
 
 ## Current Plan Data
 ` + "```json\n" + planJSON + "\n```" + `

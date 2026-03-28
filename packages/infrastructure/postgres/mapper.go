@@ -165,6 +165,8 @@ func debtToDomain(m DebtAccountModel) domain.DebtAccount {
 		RepaymentPlan:     domain.RepaymentPlan(m.RepaymentPlan),
 		PSLFEligible:      m.PSLFEligible,
 		PSLFPaymentsMade:  m.PSLFPaymentsMade,
+		PropertyValue:     m.PropertyValue,
+		AppreciationRate:  m.AppreciationRate,
 	}
 }
 
@@ -183,6 +185,8 @@ func debtToModel(d domain.DebtAccount) DebtAccountModel {
 		RepaymentPlan:     string(d.RepaymentPlan),
 		PSLFEligible:      d.PSLFEligible,
 		PSLFPaymentsMade:  d.PSLFPaymentsMade,
+		PropertyValue:     d.PropertyValue,
+		AppreciationRate:  d.AppreciationRate,
 	}
 }
 
@@ -202,6 +206,8 @@ func investmentToDomain(m InvestmentAccountModel) domain.InvestmentAccount {
 		EmployerMatchCap: m.EmployerMatchCap,
 		AssetAllocation:  alloc,
 		StartMonth:       m.StartMonth,
+		GoalTarget:       m.GoalTarget,
+		GoalLabel:        m.GoalLabel,
 	}
 }
 
@@ -218,6 +224,8 @@ func investmentToModel(inv domain.InvestmentAccount) InvestmentAccountModel {
 		EmployerMatchCap: inv.EmployerMatchCap,
 		AssetAllocation:  allocJSON,
 		StartMonth:       inv.StartMonth,
+		GoalTarget:       inv.GoalTarget,
+		GoalLabel:        inv.GoalLabel,
 	}
 }
 

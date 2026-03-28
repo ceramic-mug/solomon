@@ -123,9 +123,11 @@ type DebtAccountModel struct {
 	MinPayment        float64   `gorm:"not null;default:0"`
 	ExtraPayment      float64   `gorm:"default:0"`
 	StartMonth        int       `gorm:"not null;default:0"`
-	RepaymentPlan     string    `gorm:"not null;default:'standard'"`
-	PSLFEligible      bool      `gorm:"default:false"`
-	PSLFPaymentsMade  int       `gorm:"default:0"`
+	RepaymentPlan     string  `gorm:"not null;default:'standard'"`
+	PSLFEligible      bool    `gorm:"default:false"`
+	PSLFPaymentsMade  int     `gorm:"default:0"`
+	PropertyValue     float64 `gorm:"default:0"`
+	AppreciationRate  float64 `gorm:"default:0.03"`
 }
 
 func (DebtAccountModel) TableName() string { return "debt_accounts" }
@@ -143,6 +145,8 @@ type InvestmentAccountModel struct {
 	EmployerMatchCap float64        `gorm:"default:0"`
 	AssetAllocation  datatypes.JSON `gorm:"type:jsonb;not null"`
 	StartMonth       int            `gorm:"not null;default:0"`
+	GoalTarget       float64        `gorm:"default:0"`
+	GoalLabel        string         `gorm:"default:''"`
 }
 
 func (InvestmentAccountModel) TableName() string { return "investment_accounts" }

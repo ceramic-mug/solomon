@@ -145,16 +145,20 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 				continue
 			}
 
-			// For IDR/PAYE/SAVE plans, payment IS the income-driven amount (min_payment is irrelevant).
-			// Extra payment is still additive (e.g., user wants to pay down faster).
-			// For standard plans, use min_payment + extra_payment.
+			// Compute monthly payment based on the repayment plan.
+			// IDR/PAYE/SAVE/IBR_New use income-driven formulas; standard uses min_payment.
+			// Extra payment is always additive.
 			var payment float64
-			if d.RepaymentPlan == domain.RepaymentPlanIDR ||
-				d.RepaymentPlan == domain.RepaymentPlanPAYE ||
-				d.RepaymentPlan == domain.RepaymentPlanSAVE {
-				poverty := PovertyGuideline2026(opts.HouseholdSize)
-				payment = IDRMonthlyPayment(agi, poverty) + d.ExtraPayment
-			} else {
+			poverty := PovertyGuideline2026(opts.HouseholdSize)
+			switch d.RepaymentPlan {
+			case domain.RepaymentPlanIDR, domain.RepaymentPlanPAYE:
+				stdCap := d.StandardPayment(d.OriginalPrincipal, 120)
+				payment = PAYEMonthlyPayment(agi, poverty, stdCap) + d.ExtraPayment
+			case domain.RepaymentPlanSAVE:
+				payment = SAVEMonthlyPayment(agi, poverty) + d.ExtraPayment
+			case domain.RepaymentPlanIBRNew:
+				payment = IBRNewMonthlyPayment(agi, poverty) + d.ExtraPayment
+			default:
 				payment = d.MinPayment + d.ExtraPayment
 			}
 
@@ -164,11 +168,12 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 			totalDebtPayments += step.TotalPaid
 			totalInterestPaid += step.InterestCharge
 
-			// PSLF tracking
+			// PSLF tracking — counts qualifying payments for IDR/PAYE/SAVE/IBR_New plans
 			if d.PSLFEligible &&
 				(d.RepaymentPlan == domain.RepaymentPlanIDR ||
 					d.RepaymentPlan == domain.RepaymentPlanPAYE ||
-					d.RepaymentPlan == domain.RepaymentPlanSAVE) {
+					d.RepaymentPlan == domain.RepaymentPlanSAVE ||
+					d.RepaymentPlan == domain.RepaymentPlanIBRNew) {
 				pslfStates[i] = ProcessPSLFMonth(pslfStates[i], step.TotalPaid, debts[i].Balance, true, m)
 				totalPSLFQualifying = pslfStates[i].QualifyingPayments
 				// If forgiveness occurred, zero out the balance
@@ -183,6 +188,27 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 		for _, d := range debts {
 			totalDebt += d.Balance
 			debtBals[d.ID.String()] = d.Balance
+		}
+
+		// Home equity: for mortgage debts, compute appreciated property value minus remaining balance.
+		// If PropertyValue is not set, fall back to OriginalPrincipal (purchase price ≈ loan amount).
+		var totalHomeEquity float64
+		for _, d := range debts {
+			if d.Type == domain.DebtTypeMortgage {
+				propValue := d.PropertyValue
+				if propValue <= 0 {
+					propValue = d.OriginalPrincipal
+				}
+				appreciationRate := d.AppreciationRate
+				if appreciationRate <= 0 {
+					appreciationRate = 0.03 // default 3% annual appreciation
+				}
+				years := float64(m) / 12.0
+				appreciated := propValue * math.Pow(1+appreciationRate, years)
+				if equity := appreciated - d.Balance; equity > 0 {
+					totalHomeEquity += equity
+				}
+			}
 		}
 
 		// ---- Investment contributions & compounding ----
@@ -268,7 +294,7 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 		}
 
 		cashFlow := netIncome - totalExpenses - totalDebtPayments - totalGiving - totalInvestContrib
-		netWorth := totalInvestments - totalDebt
+		netWorth := totalInvestments - totalDebt + totalHomeEquity
 
 		snap := domain.MonthSnapshot{
 			Month:              m,
@@ -291,6 +317,9 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 		}
 		if totalPSLFQualifying > 0 {
 			snap.PSLFQualifyingPayments = totalPSLFQualifying
+		}
+		if totalHomeEquity > 0 {
+			snap.HomeEquity = totalHomeEquity
 		}
 
 		snapshots = append(snapshots, snap)

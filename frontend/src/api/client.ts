@@ -1,6 +1,7 @@
 import axios from 'axios'
 import type {
-  AuthResponse, Plan, SimulationResult, PlanComparison,
+  AuthResponse, Plan, SimulationResult, PlanComparisonFull,
+  RepaymentComparison, SocialSecurityEstimate, SimulateOverrideRequest,
   IncomeStream, Expense, DebtAccount, InvestmentAccount, LifeEvent, GivingTarget,
   SimulationConfig,
 } from './types'
@@ -99,8 +100,21 @@ export const simulate = (id: string, params?: { filing_status?: string; househol
 export const simulateMonteCarlo = (id: string, params?: { filing_status?: string; household_size?: number; state_tax?: number }) =>
   api.get<SimulationResult>(`/plans/${id}/simulate/monte`, { params }).then(r => r.data)
 
-export const comparePlans = (idA: string, idB: string) =>
-  api.get<PlanComparison>(`/plans/${idA}/compare/${idB}`).then(r => r.data)
+export const comparePlans = (idA: string, idB: string, includeSnapshots = false) =>
+  api.get<PlanComparisonFull>(`/plans/${idA}/compare/${idB}`, {
+    params: includeSnapshots ? { include_snapshots: 'true' } : undefined,
+  }).then(r => r.data)
+
+export const compareRepayment = (planId: string, params?: { filing_status?: string; household_size?: number; state_tax?: number }) =>
+  api.get<RepaymentComparison>(`/plans/${planId}/compare-repayment`, { params }).then(r => r.data)
+
+export const simulateOverride = (planId: string, overrides: SimulateOverrideRequest, params?: { filing_status?: string; household_size?: number; state_tax?: number }) =>
+  api.post<SimulationResult>(`/plans/${planId}/simulate-override`, overrides, { params }).then(r => r.data)
+
+export const estimateSocialSecurity = (planId: string, currentAge: number, retirementAge = 67) =>
+  api.get<SocialSecurityEstimate>(`/plans/${planId}/social-security`, {
+    params: { current_age: currentAge, retirement_age: retirementAge },
+  }).then(r => r.data)
 
 export const exportPlan = (id: string) =>
   api.get(`/plans/${id}/export`, { responseType: 'blob' }).then(r => r.data)

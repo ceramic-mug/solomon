@@ -30,6 +30,9 @@ func Register(e *echo.Echo, auth *handlers.AuthHandler, plans *handlers.PlanHand
 	api.GET("/plans/:id/simulate", sim.Simulate)
 	api.GET("/plans/:id/simulate/monte", sim.SimulateMonteCarlo)
 	api.GET("/plans/:id/compare/:other_id", sim.ComparePlans)
+	api.GET("/plans/:id/compare-repayment", sim.CompareRepayment)
+	api.POST("/plans/:id/simulate-override", sim.SimulateOverride)
+	api.GET("/plans/:id/social-security", sim.SocialSecurity)
 	api.GET("/plans/:id/export", sim.ExportPlan)
 
 	// Income

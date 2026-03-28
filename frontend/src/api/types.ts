@@ -68,7 +68,7 @@ export interface Expense {
 }
 
 export type DebtType = 'student_loan' | 'mortgage' | 'auto' | 'credit_card' | 'personal' | 'other'
-export type RepaymentPlan = 'standard' | 'idr' | 'paye' | 'save'
+export type RepaymentPlan = 'standard' | 'idr' | 'paye' | 'save' | 'ibr_new'
 
 export interface DebtAccount {
   id: string
@@ -84,12 +84,16 @@ export interface DebtAccount {
   repayment_plan: RepaymentPlan
   pslf_eligible: boolean
   pslf_payments_made: number
+  // Mortgage-specific
+  property_value?: number
+  appreciation_rate?: number
 }
 
 export type AccountType =
   | 'trad_401k' | 'roth_401k' | 'trad_457b'
   | 'trad_ira' | 'roth_ira' | 'hsa'
   | 'taxable' | '529' | 'cash'
+  | 'savings' | 'money_market'
 
 export interface InvestmentAccount {
   id: string
@@ -102,6 +106,8 @@ export interface InvestmentAccount {
   employer_match_cap: number
   asset_allocation: AssetAllocation
   start_month: number
+  goal_target?: number
+  goal_label?: string
 }
 
 export type GivingBasis = 'gross' | 'net'
@@ -175,6 +181,7 @@ export interface MonthSnapshot {
   total_debt: number
   total_investments: number
   net_worth: number
+  home_equity?: number
   pslf_qualifying_payments?: number
   debt_balances?: Record<string, number>
   investment_balances?: Record<string, number>
@@ -189,11 +196,22 @@ export interface MonteCarloResult {
   p90: number[]
 }
 
+export interface GoalProgress {
+  account_id: string
+  name: string
+  goal_label: string
+  target_balance: number
+  current_balance: number
+  projected_balance: number
+  reached_month: number  // -1 if not reached in horizon
+}
+
 export interface SimulationResult {
   id: string
   plan_id: string
   monthly_snapshots: MonthSnapshot[]
   monte_carlo?: MonteCarloResult
+  goal_progress?: GoalProgress[]
 }
 
 export interface HorizonDelta {
@@ -207,6 +225,53 @@ export interface PlanComparison {
   plan_a_id: string
   plan_b_id: string
   deltas: HorizonDelta[]
+}
+
+export interface HorizonDeltaFull {
+  year: number
+  plan_a_net_worth: number
+  plan_b_net_worth: number
+  plan_a_total_debt: number
+  plan_b_total_debt: number
+  plan_a_investments: number
+  plan_b_investments: number
+  net_worth_delta: number
+}
+
+export interface PlanComparisonFull {
+  plan_a_id: string
+  plan_b_id: string
+  full_deltas: HorizonDeltaFull[]
+  plan_a_snapshots?: MonthSnapshot[]
+  plan_b_snapshots?: MonthSnapshot[]
+}
+
+export interface RepaymentPlanSummary {
+  plan_name: string
+  total_interest_paid: number
+  forgiveness_amount: number
+  forgiveness_month: number
+  net_worth_30yr: number
+  debt_free_month: number
+  current_strategy: boolean
+}
+
+export interface RepaymentComparison {
+  plans: RepaymentPlanSummary[]
+}
+
+export interface SocialSecurityEstimate {
+  monthly_benefit: number
+  retirement_month: number
+  aime: number
+}
+
+export interface SimulateOverrideRequest {
+  extra_payment_delta: number
+  stock_return_override?: number
+  income_growth_override?: number
+  contribution_multiplier: number
+  unforeseen_expense_monthly?: number
 }
 
 // ---- Auth ----

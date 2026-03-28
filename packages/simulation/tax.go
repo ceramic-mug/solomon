@@ -161,9 +161,43 @@ func marginalTax(income float64, bs []bracket) float64 {
 }
 
 // IDRMonthlyPayment calculates the Income-Driven Repayment monthly payment.
-// Used for SAVE/IDR plan under PSLF: 10% of discretionary income (AGI - 150% poverty line).
-// povertyguideline is the annual federal poverty guideline for the household size.
+// Kept as an alias for PAYE behavior (10% at 150% poverty, no Standard cap).
+// Use PAYEMonthlyPayment for the correct PAYE cap, or SAVEMonthlyPayment for SAVE.
 func IDRMonthlyPayment(agi float64, povertyGuideline float64) float64 {
+	discretionary := agi - 1.5*povertyGuideline
+	if discretionary <= 0 {
+		return 0
+	}
+	return (discretionary * 0.10) / 12
+}
+
+// PAYEMonthlyPayment calculates the Pay As You Earn monthly payment:
+// 10% × max(0, AGI - 150% poverty) / 12, capped at the Standard 10-year payment.
+func PAYEMonthlyPayment(agi, povertyGuideline, standardPaymentCap float64) float64 {
+	discretionary := agi - 1.5*povertyGuideline
+	if discretionary <= 0 {
+		return 0
+	}
+	payment := (discretionary * 0.10) / 12
+	if standardPaymentCap > 0 && payment > standardPaymentCap {
+		payment = standardPaymentCap
+	}
+	return payment
+}
+
+// SAVEMonthlyPayment calculates the SAVE plan monthly payment:
+// 10% × max(0, AGI - 225% poverty) / 12, no cap.
+func SAVEMonthlyPayment(agi, povertyGuideline float64) float64 {
+	discretionary := agi - 2.25*povertyGuideline
+	if discretionary <= 0 {
+		return 0
+	}
+	return (discretionary * 0.10) / 12
+}
+
+// IBRNewMonthlyPayment calculates the IBR (New Borrower) monthly payment:
+// 10% × max(0, AGI - 150% poverty) / 12, no Standard-payment cap.
+func IBRNewMonthlyPayment(agi, povertyGuideline float64) float64 {
 	discretionary := agi - 1.5*povertyGuideline
 	if discretionary <= 0 {
 		return 0
