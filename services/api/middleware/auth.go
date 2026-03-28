@@ -50,6 +50,32 @@ func GenerateRefreshToken(userID uuid.UUID) (string, error) {
 	return token.SignedString(JWTSecret)
 }
 
+// ValidateRefreshToken parses a refresh token and returns the user ID.
+func ValidateRefreshToken(tokenStr string) (uuid.UUID, error) {
+	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return JWTSecret, nil
+	})
+	if err != nil || !token.Valid {
+		return uuid.Nil, fmt.Errorf("invalid or expired refresh token")
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return uuid.Nil, fmt.Errorf("invalid token claims")
+	}
+
+	sub, _ := claims.GetSubject()
+	id, err := uuid.Parse(sub)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("invalid user id in token")
+	}
+
+	return id, nil
+}
+
 // RequireAuth is an Echo middleware that validates the Authorization: Bearer <token> header.
 // On success, it injects the parsed Claims into the context as "claims".
 func RequireAuth(next echo.HandlerFunc) echo.HandlerFunc {

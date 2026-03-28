@@ -14,12 +14,20 @@
 - Add/edit/delete modals for every entity type
 - Live 30-year net worth chart on Dashboard using simulation results
 - Scenario fork modal and plan selector tabs
-
 ### Phase 4 — AI Agent & Chat UI
-- **Gemini agent** (`gemini-3-flash-preview`) with 11 plan-manipulation tools: create_fork, add_income, add_expense, add_debt, add_investment, add_life_event, modify_income, run_simulation, compare_plans, get_plan, list_plans
+- **Gemini agent** (`gemini-3-flash-preview`) with 12 plan-manipulation tools: create_fork, add_income, add_expense, add_debt, add_investment, add_life_event, modify_income, run_simulation, compare_plans, get_plan, list_plans
 - **SSE streaming** chat endpoint (`POST /ai/chat`) showing tool call progress in real time
 - **AIChat page** with streaming message bubbles, tool call badges, and physician-specific example prompts
 - **State tax auto-fill** on account creation: debounces state code input, calls Gemini to look up the current flat income tax rate
+
+### Bug Fixes & Refinements (Test-and-Debug Phase)
+- **Auth Persistence**: Added `/auth/refresh` endpoint and refresh token storage in frontend.
+- **Axios Interceptor**: Implemented automatic token refresh on 401 errors to prevent session loss.
+- **Scenarios Page**: Fixed "Too many re-renders" infinite loop caused by incorrect `useQuery` usage.
+- **AI Agent**: Added missing `add_income` tool to the agentic loop.
+- **Type Safety**: Improved null-handling in formatting functions.
+
+## What's next
 
 ### Infrastructure
 - Docker Compose: PostgreSQL 16 + Go API + Vite dev server

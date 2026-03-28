@@ -18,7 +18,7 @@ export default function Login() {
     setLoading(true)
     try {
       const res = await login(email, password)
-      setAuth(res.user, res.access_token)
+      setAuth(res.user, res.access_token, res.refresh_token)
       navigate('/')
     } catch {
       setError('Invalid email or password.')

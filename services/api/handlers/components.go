@@ -168,6 +168,7 @@ func (h *ComponentHandler) UpdateDebt(c echo.Context) error {
 	if err := c.Bind(&d); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
+	d.OriginalPrincipal = d.Balance
 	if err := h.repo.UpdateDebt(c.Request().Context(), d); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
@@ -259,6 +260,21 @@ func (h *ComponentHandler) CreateEvent(c echo.Context) error {
 	return c.JSON(http.StatusCreated, created)
 }
 
+func (h *ComponentHandler) UpdateEvent(c echo.Context) error {
+	_, _, err := h.planID(c)
+	if err != nil {
+		return err
+	}
+	var ev domain.LifeEvent
+	if err := c.Bind(&ev); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if err := h.repo.UpdateLifeEvent(c.Request().Context(), ev); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(http.StatusOK, ev)
+}
+
 func (h *ComponentHandler) DeleteEvent(c echo.Context) error {
 	_, _, err := h.planID(c)
 	if err != nil {
@@ -292,6 +308,21 @@ func (h *ComponentHandler) CreateGiving(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 	return c.JSON(http.StatusCreated, created)
+}
+
+func (h *ComponentHandler) UpdateGiving(c echo.Context) error {
+	_, _, err := h.planID(c)
+	if err != nil {
+		return err
+	}
+	var g domain.GivingTarget
+	if err := c.Bind(&g); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if err := h.repo.UpdateGivingTarget(c.Request().Context(), g); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(http.StatusOK, g)
 }
 
 func (h *ComponentHandler) DeleteGiving(c echo.Context) error {

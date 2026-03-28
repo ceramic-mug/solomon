@@ -461,6 +461,33 @@ func (h *AIHandler) executeTool(
 		}
 		return created, nil
 
+	case "add_income":
+		id := planID
+		if s, ok := args["plan_id"].(string); ok {
+			if p, err := uuid.Parse(s); err == nil {
+				id = p
+			}
+		}
+		inc := domain.IncomeStream{
+			ID:          uuid.New(),
+			PlanID:      id,
+			Name:        getString(args, "name"),
+			Type:        domain.IncomeType(getString(args, "type")),
+			Amount:      getFloat(args, "amount"),
+			GrowthRate:  getFloat(args, "growth_rate"),
+			StartMonth:  int(getFloat(args, "start_month")),
+			TaxCategory: domain.TaxCategory(getString(args, "tax_category")),
+		}
+		if em, ok := args["end_month"].(float64); ok {
+			n := int(em)
+			inc.EndMonth = &n
+		}
+		created, err := h.repo.CreateIncomeStream(ctx, inc)
+		if err != nil {
+			return nil, err
+		}
+		return created, nil
+
 	case "modify_income":
 		id := planID
 		if s, ok := args["plan_id"].(string); ok {
@@ -671,6 +698,24 @@ func solomonToolDefs() *genai.Tool {
 						"start_month":    num("Month index when account starts"),
 					},
 					Required: []string{"name", "type", "monthly_contrib"},
+				},
+			},
+			{
+				Name:        "add_income",
+				Description: "Add a recurring income stream (e.g. residency salary, attending bonus) to a plan.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"plan_id":      str("UUID of the plan"),
+						"name":         str("Income name, e.g. 'Residency Salary'"),
+						"type":         str("Income type: salary, bonus, side_income, investment, rental, other"),
+						"tax_category": str("Tax category: w2, self_employed, passive, capital_gains"),
+						"amount":       num("Monthly gross amount in dollars"),
+						"growth_rate":  num("Annual growth rate as decimal (e.g. 0.03 for 3%)"),
+						"start_month":  num("Month index when this income starts"),
+						"end_month":    num("Month index when income ends (omit for indefinite)"),
+					},
+					Required: []string{"name", "type", "tax_category", "amount", "start_month"},
 				},
 			},
 			{

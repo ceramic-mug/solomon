@@ -19,6 +19,50 @@ api.interceptors.request.use(cfg => {
   return cfg
 })
 
+// Handle 401 errors — attempt to refresh token once.
+api.interceptors.response.use(
+  res => res,
+  async err => {
+    const originalRequest = err.config
+    if (err.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true
+      
+      // Get refresh token from zustand persisted state
+      const authStr = localStorage.getItem('solomon-auth')
+      if (authStr) {
+        try {
+          const { state } = JSON.parse(authStr)
+          if (state.refreshToken) {
+            const res = await axios.post<{ access_token: string }>('/auth/refresh', {
+              refresh_token: state.refreshToken
+            })
+            const newToken = res.data.access_token
+            
+            // Update localStorage and zustand state (via direct storage update)
+            localStorage.setItem('access_token', newToken)
+            const newState = { ...state, accessToken: newToken }
+            localStorage.setItem('solomon-auth', JSON.stringify({ state: newState, version: 0 }))
+            
+            // Retry original request
+            originalRequest.headers.Authorization = `Bearer ${newToken}`
+            return api(originalRequest)
+          }
+        } catch (refreshErr) {
+          // Refresh failed — clear auth and redirect
+          localStorage.removeItem('access_token')
+          localStorage.removeItem('solomon-auth')
+          window.location.href = '/login'
+          return Promise.reject(refreshErr)
+        }
+      }
+      
+      // No refresh token — redirect
+      window.location.href = '/login'
+    }
+    return Promise.reject(err)
+  }
+)
+
 // ---- Auth ----
 
 export const register = (email: string, password: string, name: string, state_code = '', state_tax = 0) =>
@@ -110,6 +154,9 @@ export const deleteInvestment = (planId: string, id: string) =>
 export const createEvent = (planId: string, data: Omit<LifeEvent, 'id' | 'plan_id'>) =>
   api.post<LifeEvent>(`/plans/${planId}/events`, data).then(r => r.data)
 
+export const updateEvent = (planId: string, id: string, data: LifeEvent) =>
+  api.put<LifeEvent>(`/plans/${planId}/events/${id}`, data).then(r => r.data)
+
 export const deleteEvent = (planId: string, id: string) =>
   api.delete(`/plans/${planId}/events/${id}`)
 
@@ -117,6 +164,9 @@ export const deleteEvent = (planId: string, id: string) =>
 
 export const createGiving = (planId: string, data: Omit<GivingTarget, 'id' | 'plan_id'>) =>
   api.post<GivingTarget>(`/plans/${planId}/giving`, data).then(r => r.data)
+
+export const updateGiving = (planId: string, id: string, data: GivingTarget) =>
+  api.put<GivingTarget>(`/plans/${planId}/giving/${id}`, data).then(r => r.data)
 
 export const deleteGiving = (planId: string, id: string) =>
   api.delete(`/plans/${planId}/giving/${id}`)

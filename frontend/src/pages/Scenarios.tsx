@@ -6,15 +6,14 @@ import type { SimulationResult } from '../api/types'
 import NetWorthChart from '../components/charts/NetWorthChart'
 import { GitBranch, TrendingUp } from 'lucide-react'
 
-function fmt(n: number) {
+function fmt(n: number | undefined | null) {
+  if (n === undefined || n === null) return '—'
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
 }
 
 export default function Scenarios() {
   const { id: planId } = useParams<{ id: string }>()
   const [compareId, setCompareId] = useState<string | null>(null)
-  const [simA, setSimA] = useState<SimulationResult | null>(null)
-  const [simB, setSimB] = useState<SimulationResult | null>(null)
 
   const { data: plans = [] } = useQuery({
     queryKey: ['plans'],
@@ -25,19 +24,17 @@ export default function Scenarios() {
   const forks = plans.filter(p => p.parent_plan_id === planId || p.id === planId)
 
   // Simulate base plan on mount
-  useQuery({
+  const { data: simA } = useQuery({
     queryKey: ['simulate', planId],
     queryFn: () => planId ? simulate(planId) : null,
     enabled: !!planId,
-    select: (data) => { if (data) setSimA(data); return data },
   })
 
   // Simulate comparison plan when selected
-  useQuery({
+  const { data: simB } = useQuery({
     queryKey: ['simulate', compareId],
     queryFn: () => compareId ? simulate(compareId) : null,
     enabled: !!compareId,
-    select: (data) => { if (data) setSimB(data); return data },
   })
 
   const { data: comparison } = useQuery({

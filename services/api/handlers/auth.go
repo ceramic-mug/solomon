@@ -110,3 +110,32 @@ func (h *AuthHandler) Login(c echo.Context) error {
 		User:         user,
 	})
 }
+
+// Refresh issues a new access token using a refresh token.
+func (h *AuthHandler) Refresh(c echo.Context) error {
+	var req struct {
+		RefreshToken string `json:"refresh_token" validate:"required"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	userID, err := mw.ValidateRefreshToken(req.RefreshToken)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired refresh token")
+	}
+
+	profile, err := h.repo.GetProfileByUserID(c.Request().Context(), userID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "profile not found")
+	}
+
+	access, err := mw.GenerateAccessToken(userID, profile.ID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate access token")
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"access_token": access,
+	})
+}

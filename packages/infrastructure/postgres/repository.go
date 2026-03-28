@@ -402,6 +402,31 @@ func (r *Repository) CreateLifeEvent(ctx context.Context, ev domain.LifeEvent) (
 	return ev, nil
 }
 
+func (r *Repository) UpdateLifeEvent(ctx context.Context, ev domain.LifeEvent) error {
+	m := lifeEventToModel(ev)
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&LifeEventModel{
+			ID: m.ID, PlanID: m.PlanID, Name: m.Name, Type: m.Type, Month: m.Month,
+		}).Error; err != nil {
+			return err
+		}
+		// Simple approach: delete all impacts and recreate them
+		if err := tx.Delete(&EventImpactModel{}, "event_id = ?", m.ID).Error; err != nil {
+			return err
+		}
+		for i := range m.Impacts {
+			if m.Impacts[i].ID == uuid.Nil {
+				m.Impacts[i].ID = uuid.New()
+			}
+			m.Impacts[i].EventID = m.ID
+			if err := tx.Create(&m.Impacts[i]).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (r *Repository) DeleteLifeEvent(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Delete(&EventImpactModel{}, "event_id = ?", id).Error; err != nil {

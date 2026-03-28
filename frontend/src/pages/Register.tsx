@@ -64,7 +64,7 @@ export default function Register() {
         form.state_code.toUpperCase(),
         parseFloat(form.state_tax || '0') / 100,
       )
-      setAuth(res.user, res.access_token)
+      setAuth(res.user, res.access_token, res.refresh_token)
       navigate('/')
     } catch {
       setError('Registration failed. Email may already be in use.')

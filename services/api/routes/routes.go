@@ -13,6 +13,7 @@ func Register(e *echo.Echo, auth *handlers.AuthHandler, plans *handlers.PlanHand
 	// ---- Public ----
 	e.POST("/auth/register", auth.Register)
 	e.POST("/auth/login", auth.Login)
+	e.POST("/auth/refresh", auth.Refresh)
 
 	// ---- Protected ----
 	api := e.Group("", mw.RequireAuth)
@@ -53,10 +54,12 @@ func Register(e *echo.Echo, auth *handlers.AuthHandler, plans *handlers.PlanHand
 
 	// Life Events
 	api.POST("/plans/:id/events", comp.CreateEvent)
+	api.PUT("/plans/:id/events/:sid", comp.UpdateEvent)
 	api.DELETE("/plans/:id/events/:sid", comp.DeleteEvent)
 
 	// Giving
 	api.POST("/plans/:id/giving", comp.CreateGiving)
+	api.PUT("/plans/:id/giving/:sid", comp.UpdateGiving)
 	api.DELETE("/plans/:id/giving/:sid", comp.DeleteGiving)
 
 	// AI — state-tax is public (called during registration before auth)
