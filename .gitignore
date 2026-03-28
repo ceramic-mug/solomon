@@ -224,3 +224,9 @@ docker-compose.override.yml
 # ---- Secrets ----
 *.key
 .env
+
+# VS CODE
+.vscode
+
+# Claude
+.claude
