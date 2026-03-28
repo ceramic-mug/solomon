@@ -7,6 +7,8 @@ import NetWorthChart from '../components/charts/NetWorthChart'
 import type { Plan, SimulationResult } from '../api/types'
 import { Plus, GitBranch, TrendingUp, DollarSign, CreditCard, Landmark, MessageSquare } from 'lucide-react'
 
+const EMPTY_PLANS: Plan[] = []
+
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
 }
@@ -30,11 +32,16 @@ export default function Dashboard() {
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
 
-  const { data: plans = [], isLoading } = useQuery({
+  const { data: plans = EMPTY_PLANS, isLoading, isError } = useQuery({
     queryKey: ['plans'],
     queryFn: listPlans,
-    select: (data) => { setPlans(data); return data },
   })
+
+  // Sync server data into Zustand store (kept separate from the query to
+  // avoid side-effects inside select, which can cause re-render loops in v5)
+  useEffect(() => {
+    setPlans(plans)
+  }, [plans])
 
   const activePlan = plans.find(p => p.id === activePlanId) ?? plans[0]
 
