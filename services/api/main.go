@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
@@ -19,6 +20,15 @@ func main() {
 	jwtSecret := env("JWT_SECRET", "dev-secret-change-me-in-production")
 	port := env("PORT", "8080")
 	geminiKey := env("GEMINI_API_KEY", "")
+	if geminiKey == "" {
+		for _, path := range []string{"solomon_gemini_api.key", "/app/solomon_gemini_api.key"} {
+			if data, err := os.ReadFile(path); err == nil {
+				geminiKey = strings.TrimSpace(string(data))
+				log.Printf("loaded Gemini API key from %s", path)
+				break
+			}
+		}
+	}
 
 	mw.JWTSecret = []byte(jwtSecret)
 

@@ -111,7 +111,7 @@ func (h *AIHandler) runAgent(
 
 	planJSON, _ := json.MarshalIndent(plan, "", "  ")
 
-	model := client.GenerativeModel("gemini-2.0-flash")
+	model := client.GenerativeModel("gemini-3-flash-preview")
 	model.Tools = []*genai.Tool{solomonToolDefs()}
 	model.SystemInstruction = &genai.Content{
 		Parts: []genai.Part{genai.Text(buildSystemPrompt(string(planJSON)))},

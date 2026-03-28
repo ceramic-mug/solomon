@@ -7,10 +7,10 @@ export default defineConfig({
     port: 3000,
     proxy: {
       // Proxy API calls to the Go backend during development
-      '/auth': 'http://localhost:8080',
-      '/plans': 'http://localhost:8080',
-      '/ai': 'http://localhost:8080',
-      '/health': 'http://localhost:8080',
+      '/auth': 'http://localhost:8082',
+      '/plans': 'http://localhost:8082',
+      '/ai': 'http://localhost:8082',
+      '/health': 'http://localhost:8082',
     },
   },
 })

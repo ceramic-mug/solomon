@@ -220,3 +220,7 @@ frontend/dist/
 
 # ---- Docker ----
 docker-compose.override.yml
+
+# ---- Secrets ----
+*.key
+.env
