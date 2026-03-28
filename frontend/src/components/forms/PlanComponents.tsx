@@ -13,7 +13,7 @@ import type {
   Plan, IncomeStream, Expense, DebtAccount,
   InvestmentAccount, LifeEvent, GivingTarget,
   IncomeType, TaxCategory, ExpenseCategory,
-  DebtType, RepaymentPlan, AccountType, GivingBasis, EventType,
+  DebtType, RepaymentPlan, AccountType, GivingBasis, ContribBasis, EventType,
 } from '../../api/types'
 import { Trash2, Edit2, Copy } from 'lucide-react'
 import Modal from '../Modal'
@@ -603,7 +603,9 @@ export function InvestmentForm({ planId, onClose, initialData }: {
   const [name, setName] = useState(initialData?.name ?? '')
   const [type, setType] = useState<AccountType>(initialData?.type ?? 'trad_401k')
   const [balance, setBalance] = useState(initialData?.balance ?? 0)
+  const [contribBasis, setContribBasis] = useState<ContribBasis>(initialData?.contrib_basis ?? 'fixed')
   const [contrib, setContrib] = useState(initialData?.monthly_contrib ?? 0)
+  const [contribPercent, setContribPercent] = useState((initialData?.contrib_percent ?? 0) * 100)
   const [match, setMatch] = useState((initialData?.employer_match ?? 0) * 100)
   const [matchCap, setMatchCap] = useState((initialData?.employer_match_cap ?? 0) * 100)
   const [stockPct, setStockPct] = useState((initialData?.asset_allocation?.stock_pct ?? 0.9) * 100)
@@ -616,7 +618,9 @@ export function InvestmentForm({ planId, onClose, initialData }: {
     mutationFn: () => {
       const data = {
         name, type, balance,
-        monthly_contrib: contrib,
+        monthly_contrib: contribBasis === 'fixed' ? contrib : 0,
+        contrib_basis: contribBasis,
+        contrib_percent: contribBasis !== 'fixed' ? contribPercent / 100 : 0,
         employer_match: match / 100,
         employer_match_cap: matchCap / 100,
         asset_allocation: {
@@ -649,6 +653,13 @@ export function InvestmentForm({ planId, onClose, initialData }: {
     { value: 'savings', label: 'High-Yield Savings' },
     { value: 'money_market', label: 'Money Market' },
   ]
+  
+  const basisOpts: { value: ContribBasis; label: string }[] = [
+    { value: 'fixed', label: 'Fixed Amount ($)' },
+    { value: 'gross', label: '% of Gross Income' },
+    { value: 'net', label: '% of Net Income' },
+    { value: 'remainder', label: 'Remainder Cash Flow' },
+  ]
 
   return (
     <form onSubmit={e => { e.preventDefault(); mut.mutate() }} className="space-y-4">
@@ -658,10 +669,17 @@ export function InvestmentForm({ planId, onClose, initialData }: {
       </div>
       <div className="grid grid-cols-2 gap-4">
         <Field label="Current Balance ($)"><Num value={balance} onChange={setBalance} placeholder="0" min={0} /></Field>
-        <Field label="Monthly Contribution ($)"><Num value={contrib} onChange={setContrib} placeholder="500" min={0} /></Field>
+        {contribBasis === 'fixed' ? (
+          <Field label="Monthly Contribution ($)"><Num value={contrib} onChange={setContrib} placeholder="500" min={0} /></Field>
+        ) : (
+          <Field label="Contribution (%)"><Num value={contribPercent} onChange={setContribPercent} placeholder="10" min={0} max={100} step={0.5} /></Field>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-4">
+        <Field label="Contribution Basis"><Select value={contribBasis} onChange={v => setContribBasis(v as ContribBasis)} options={basisOpts} /></Field>
         <Field label="Employer Match (%)"><Num value={match} onChange={setMatch} placeholder="0" min={0} max={100} step={0.5} /></Field>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
         <Field label="Match Cap (% of salary)"><Num value={matchCap} onChange={setMatchCap} placeholder="0" min={0} max={100} step={0.5} /></Field>
       </div>
       <div>
@@ -720,7 +738,11 @@ export function InvestmentsTab({ plan }: { plan: Plan }) {
           </div>
           <div className="flex gap-4 text-sm text-gray-500">
             <span>{inv.type.replace(/_/g, ' ').toUpperCase()}</span>
-            <span>{fmt(inv.monthly_contrib)}/mo</span>
+            <span>
+              {inv.contrib_basis === 'fixed' 
+                ? `${fmt(inv.monthly_contrib)}/mo` 
+                : `${(inv.contrib_percent * 100).toFixed(1)}% (${inv.contrib_basis})`}
+            </span>
             <span>{Math.round(inv.asset_allocation.stock_pct * 100)}% stock / {Math.round(inv.asset_allocation.bond_pct * 100)}% bond</span>
           </div>
         </div>
@@ -871,6 +893,7 @@ export function GivingForm({ planId, onClose, initialData }: {
   const basisOpts: { value: GivingBasis; label: string }[] = [
     { value: 'gross', label: 'Gross Income' },
     { value: 'net', label: 'Net Income (after tax)' },
+    { value: 'remainder', label: 'Remainder Cash Flow' },
   ]
 
   return (

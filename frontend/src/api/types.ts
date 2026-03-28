@@ -99,6 +99,8 @@ export type AccountType =
   | 'taxable' | '529' | 'cash'
   | 'savings' | 'money_market'
 
+export type ContribBasis = 'fixed' | 'gross' | 'net' | 'remainder'
+
 export interface InvestmentAccount {
   id: string
   plan_id: string
@@ -106,6 +108,8 @@ export interface InvestmentAccount {
   type: AccountType
   balance: number
   monthly_contrib: number
+  contrib_basis: ContribBasis
+  contrib_percent: number
   employer_match: number
   employer_match_cap: number
   asset_allocation: AssetAllocation
@@ -114,7 +118,7 @@ export interface InvestmentAccount {
   goal_label?: string
 }
 
-export type GivingBasis = 'gross' | 'net'
+export type GivingBasis = 'gross' | 'net' | 'remainder'
 
 export interface GivingTarget {
   id: string

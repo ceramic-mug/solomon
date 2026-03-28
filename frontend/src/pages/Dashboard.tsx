@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listPlans, createPlan, getPlan, simulate, comparePlans, compareRepayment, updatePlan } from '../api/client'
+import { listPlans, createPlan, getPlan, simulate, comparePlans, compareRepayment, updatePlan, updateInvestment, updateGiving } from '../api/client'
 import { usePlanStore } from '../store/plan'
 import FinancialOverviewChart from '../components/charts/FinancialOverviewChart'
 import DebtTrajectoryChart from '../components/charts/DebtTrajectoryChart'
@@ -98,6 +98,159 @@ function TabContent({ tab, plan }: { tab: TabType; plan: Plan }) {
     case 'giving':      return <GivingTab plan={plan} />
     default:            return null
   }
+}
+
+function TargetCashFlowInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  // Convert legacy values (> 1.0) into a sensible default percentage like 10%
+  const initialPercent = value > 1.0 ? 10 : Math.round(value * 100)
+  const [local, setLocal] = useState(initialPercent)
+  
+  useEffect(() => {
+    setLocal(value > 1.0 ? 10 : Math.round(value * 100))
+  }, [value])
+
+  const handleSave = (val: number) => {
+    // Save as a decimal (0.0 to 1.0) to the backend
+    onChange(val / 100)
+  }
+
+  return (
+    <div className="pt-2 space-y-3">
+      <div className="flex items-center gap-2">
+        <input 
+          type="number" 
+          value={local} 
+          min="0"
+          max="100"
+          onChange={e => setLocal(parseInt(e.target.value) || 0)} 
+          onBlur={() => handleSave(local)}
+          onKeyDown={e => e.key === 'Enter' && handleSave(local)}
+          className="input flex-1 bg-gray-900 border-gray-700 text-sm font-mono text-center" 
+        />
+        <span className="text-gray-400 text-xs font-semibold">% of Net</span>
+        <button onClick={() => handleSave(local)} className="btn-secondary px-2 py-1 text-xs whitespace-nowrap">Save</button>
+      </div>
+      <input 
+        type="range" min="0" max="100" step="1" 
+        value={local} 
+        onChange={e => setLocal(parseInt(e.target.value) || 0)} 
+        onMouseUp={() => handleSave(local)}
+        onTouchEnd={() => handleSave(local)}
+        className="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500" 
+      />
+    </div>
+  )
+}
+
+function OverflowAllocator({ plan }: { plan: Plan }) {
+  const qc = useQueryClient()
+  const [selectedId, setSelectedId] = useState('')
+  const [percent, setPercent] = useState(10)
+
+  const invs = plan.investment_accounts ?? []
+  const givs = plan.giving_targets ?? []
+
+  const invRemainders = invs.filter(a => a.contrib_basis === 'remainder')
+  const givRemainders = givs.filter(g => g.basis === 'remainder')
+  
+  const totalAllocated = invRemainders.reduce((s, a) => s + a.contrib_percent, 0) + givRemainders.reduce((s, g) => s + g.percentage, 0)
+  const isOver = totalAllocated > 1.0
+
+  const handleAdd = async () => {
+    if (!selectedId) return
+    
+    // Check if it's an investment
+    const inv = invs.find(x => x.id === selectedId)
+    if (inv) {
+      await updateInvestment(plan.id, inv.id, { ...inv, monthly_contrib: 0, contrib_basis: 'remainder', contrib_percent: percent / 100 })
+    } else {
+      // Check if it's giving
+      const giv = givs.find(x => x.id === selectedId)
+      if (giv) {
+        await updateGiving(plan.id, giv.id, { ...giv, basis: 'remainder', percentage: percent / 100 })
+      }
+    }
+    qc.invalidateQueries({ queryKey: ['plan', plan.id] })
+    qc.invalidateQueries({ queryKey: ['simulate', plan.id] })
+    setSelectedId('')
+  }
+
+  const handleRemove = async (type: 'inv' | 'giv', id: string) => {
+    if (type === 'inv') {
+      const inv = invs.find(x => x.id === id)!
+      await updateInvestment(plan.id, inv.id, { ...inv, contrib_basis: 'fixed', monthly_contrib: 0, contrib_percent: 0 })
+    } else {
+      const giv = givs.find(x => x.id === id)!
+      await updateGiving(plan.id, giv.id, { ...giv, basis: 'gross', percentage: 0 })
+    }
+    qc.invalidateQueries({ queryKey: ['plan', plan.id] })
+    qc.invalidateQueries({ queryKey: ['simulate', plan.id] })
+  }
+
+  // Filter out those already in remainder
+  const availInvs = invs.filter(a => a.contrib_basis !== 'remainder')
+  const availGivs = givs.filter(g => g.basis !== 'remainder')
+
+  return (
+    <div className="mt-6 pt-5 border-t border-gray-800/60">
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="text-xs font-semibold text-gray-300">Overflow Allocation</h4>
+        <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${isOver ? 'bg-red-900/40 text-red-400' : 'bg-gray-800 text-gray-400'}`}>
+          Total: {(totalAllocated * 100).toFixed(0)}%
+        </span>
+      </div>
+      
+      {/* Visual Stacked Bar */}
+      <div className="w-full h-1.5 bg-gray-900 rounded-full overflow-hidden mb-4 flex">
+        {invRemainders.map(a => <div key={a.id} style={{ width: `${a.contrib_percent * 100}%` }} className="h-full bg-emerald-500 hover:bg-emerald-400 transition-colors" title={a.name} />)}
+        {givRemainders.map(g => <div key={g.id} style={{ width: `${g.percentage * 100}%` }} className="h-full bg-amber-500 hover:bg-amber-400 transition-colors" title={g.name} />)}
+      </div>
+      
+      {invRemainders.length === 0 && givRemainders.length === 0 ? (
+        <p className="text-[11px] text-gray-500 mb-4 bg-black/20 p-2 rounded">
+          Any remaining cash flow above your ${plan.simulation_config.target_cash_flow.toLocaleString()} target is currently unallocated and will accumulate as raw cash.
+        </p>
+      ) : (
+        <div className="space-y-2 mb-4">
+          {invRemainders.map(a => (
+            <div key={a.id} className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-gray-800">
+              <span className="text-gray-300 flex items-center gap-2"><Landmark size={12}/> {a.name}</span>
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-emerald-400">{(a.contrib_percent * 100).toFixed(0)}%</span>
+                <button onClick={() => handleRemove('inv', a.id)} className="text-gray-600 hover:text-red-400"><X size={12} /></button>
+              </div>
+            </div>
+          ))}
+          {givRemainders.map(g => (
+            <div key={g.id} className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-gray-800">
+              <span className="text-gray-300 flex items-center gap-2"><Heart size={12}/> {g.name}</span>
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-amber-400">{(g.percentage * 100).toFixed(0)}%</span>
+                <button onClick={() => handleRemove('giv', g.id)} className="text-gray-600 hover:text-red-400"><X size={12} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <select value={selectedId} onChange={e => setSelectedId(e.target.value)} className="input text-xs flex-1 bg-gray-900 border-gray-700">
+          <option value="">Select target account...</option>
+          {availInvs.length > 0 && <optgroup label="Investments & Savings" className="text-gray-500">
+            {availInvs.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </optgroup>}
+          {availGivs.length > 0 && <optgroup label="Giving Targets" className="text-gray-500">
+            {availGivs.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </optgroup>}
+        </select>
+        <div className="flex items-center justify-between bg-gray-900 rounded border border-gray-700 px-3 w-20">
+          <input type="number" min="0" max="100" value={percent} onChange={e => setPercent(parseInt(e.target.value) || 0)} className="bg-transparent border-none focus:ring-0 focus:outline-none p-0 w-8 text-center text-xs text-white [&::-webkit-inner-spin-button]:hidden [&::-webkit-outer-spin-button]:hidden" />
+          <span className="text-[10px] text-gray-500 font-medium">%</span>
+        </div>
+        <button onClick={handleAdd} disabled={!selectedId} className="btn-secondary px-3 py-1 text-xs">Add</button>
+      </div>
+    </div>
+  )
 }
 
 type ChartView = 'overview' | 'debt' | 'cashflow' | 'savings' | 'table' | 'repayment' | 'comparison'
@@ -472,8 +625,8 @@ export default function Dashboard() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-5 items-start">
-                <div className="lg:col-span-3 space-y-5">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+                <div className="lg:col-span-8 space-y-5">
                   {/* Chart section */}
                   <div className="card">
                     <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -525,91 +678,39 @@ export default function Dashboard() {
                     )}
                   </div>
 
-                  {/* Cash Flow Constrainer & Optimization Panel */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="card border-blue-900/20 bg-blue-900/5">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2">
-                          <ShieldCheck size={18} className="text-blue-400" />
-                          <h3 className="font-semibold text-white text-sm">Cash Flow Constrainer</h3>
-                        </div>
-                        <button onClick={() => setShowConfig(!showConfig)} className="text-gray-500 hover:text-white">
-                          <Settings2 size={16} />
-                        </button>
+                  {/* Cash Flow Constrainer */}
+                  <div className="card border-blue-900/20 bg-blue-900/5">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck size={18} className="text-blue-400" />
+                        <h3 className="font-semibold text-white text-sm">Cash Flow Constrainer</h3>
                       </div>
-                      
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-gray-400">Target Monthly Cash Flow</span>
-                          <span className="text-xs font-mono text-white bg-gray-900 px-2 py-1 rounded">{fmt(activePlan.simulation_config.target_cash_flow)}</span>
-                        </div>
-
-                        <div className="grid grid-cols-3 gap-2">
-                          {[
-                            { label: 'Giving', key: 'constrain_giving' as const, icon: <Heart size={12} /> },
-                            { label: 'Invest', key: 'constrain_investments' as const, icon: <Landmark size={12} /> },
-                            { label: 'Savings', key: 'constrain_savings' as const, icon: <Wallet size={12} /> },
-                          ].map(item => (
-                            <button
-                              key={item.key}
-                              onClick={() => updateConfigMutation.mutate({ [item.key]: !activePlan.simulation_config[item.key] })}
-                              className={`flex flex-col items-center gap-2 p-3 rounded-lg border transition-all ${activePlan.simulation_config[item.key] ? 'bg-blue-600/20 border-blue-500 text-blue-400' : 'bg-gray-900/50 border-gray-800 text-gray-500 grayscale'}`}
-                            >
-                              {item.icon}
-                              <span className="text-[10px] font-bold uppercase tracking-wider">{item.label}</span>
-                            </button>
-                          ))}
-                        </div>
-
-                        {showConfig && (
-                          <div className="pt-2">
-                            <input type="range" min="0" max="5000" step="100" value={activePlan.simulation_config.target_cash_flow} onChange={e => updateConfigMutation.mutate({ target_cash_flow: parseInt(e.target.value) })} className="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500" />
-                          </div>
-                        )}
-                        <p className="text-[11px] text-gray-500 leading-relaxed bg-black/20 p-2 rounded border border-gray-800/50">
-                          {activePlan.simulation_config.constrain_investments || activePlan.simulation_config.constrain_giving || activePlan.simulation_config.constrain_savings 
-                            ? "Outflows will be dynamically scaled down to maintain your target cash flow floor."
-                            : "No constraints applied."
-                          }
-                        </p>
-                      </div>
+                      <button onClick={() => setShowConfig(!showConfig)} className="text-gray-500 hover:text-white">
+                        <Settings2 size={16} />
+                      </button>
                     </div>
+                    
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-400">Cash Flow Ceiling / Sweep Threshold</span>
+                        <span className="text-xs font-mono text-white bg-gray-900 px-2 py-1 rounded">
+                          {activePlan.simulation_config.target_cash_flow > 1.0 
+                            ? fmt(activePlan.simulation_config.target_cash_flow) 
+                            : `${(activePlan.simulation_config.target_cash_flow * 100).toFixed(0)}% of Net`}
+                        </span>
+                      </div>
 
-                    <div className="card border-purple-900/20 bg-purple-900/5">
-                      <div className="flex items-center gap-2 mb-4">
-                        <Zap size={18} className="text-purple-400" />
-                        <h3 className="font-semibold text-white text-sm">Goal Optimizer</h3>
-                      </div>
-                      <div className="space-y-3">
-                        <p className="text-xs text-gray-500 leading-relaxed">Let Solomon solve for your goals.</p>
-                        <div className="space-y-2">
-                          {[
-                            { label: "Optimize for $2M by month 240", prompt: "Use the optimize_plan tool to reach $2M net worth by month 240 by adjusting my monthly contribution to my primary retirement account." },
-                            { label: "Find required savings for Year 10 debt-free", prompt: "Use the optimize_plan tool to find the required extra debt payment to be debt-free by month 120." },
-                            { label: "Maximize giving with $2k/mo floor", prompt: "Set my target cash flow to $2000 and enable 'constrain_giving' to see how much I can give while staying above my floor." },
-                          ].map(goal => (
-                            <button 
-                              key={goal.label} 
-                              onClick={async () => {
-                                const token = localStorage.getItem('access_token')
-                                if (!activePlan_id) return
-                                alert("Solomon is calculating scenario optimization...")
-                                await fetch('/ai/chat', {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-                                  body: JSON.stringify({ plan_id: activePlan_id, message: goal.prompt }),
-                                })
-                                qc.invalidateQueries({ queryKey: ['plans'] })
-                                qc.invalidateQueries({ queryKey: ['simulate', activePlan_id] })
-                              }} 
-                              className="w-full text-left px-3 py-2 text-[11px] bg-gray-900/50 border border-gray-800 rounded hover:border-purple-500/50 text-gray-400 hover:text-purple-300 flex items-center justify-between group"
-                            >
-                              {goal.label}
-                              <ChevronRight size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                      {showConfig && (
+                        <TargetCashFlowInput 
+                          value={activePlan.simulation_config.target_cash_flow} 
+                          onChange={(v) => updateConfigMutation.mutate({ target_cash_flow: v })} 
+                        />
+                      )}
+                      <p className="text-[11px] text-gray-500 leading-relaxed bg-black/20 p-2 rounded border border-gray-800/50">
+                        Raw cash accumulation will be capped at this threshold. Any monthly cash flow generated above this ceiling will be swept precisely according to your overflow allocations below.
+                      </p>
+
+                      <OverflowAllocator plan={activePlan} />
                     </div>
                   </div>
 
@@ -617,7 +718,7 @@ export default function Dashboard() {
                   {simResult && <SensitivityPanel planId={activePlan.id} simParams={{ filing_status: 'mfj', household_size: 2 }} onResult={snaps => { setWhatIfSnapshots(snaps); if (snaps && validView !== 'overview') setChartView('overview') }} />}
                 </div>
 
-                <div className="lg:col-span-1 space-y-5">
+                <div className="lg:col-span-4 space-y-5">
                   {simResult && hasDebts && <DebtFreedomPanel snapshots={snapshots} plan={activePlan} />}
                   {simResult?.goal_progress?.length ? <GoalsPanel goals={simResult.goal_progress} startYear={activePlan.simulation_config.start_year} startMonth={activePlan.simulation_config.start_month} /> : null}
                   <div className="card flex flex-col">

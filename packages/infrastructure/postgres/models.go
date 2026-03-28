@@ -147,6 +147,8 @@ type InvestmentAccountModel struct {
 	Type             string         `gorm:"not null"`
 	Balance          float64        `gorm:"not null;default:0"`
 	MonthlyContrib   float64        `gorm:"not null;default:0"`
+	ContribBasis     string         `gorm:"not null;default:'fixed'"`
+	ContribPercent   float64        `gorm:"not null;default:0"`
 	EmployerMatch    float64        `gorm:"default:0"`
 	EmployerMatchCap float64        `gorm:"default:0"`
 	AssetAllocation  datatypes.JSON `gorm:"type:jsonb;not null"`

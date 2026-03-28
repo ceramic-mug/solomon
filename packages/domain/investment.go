@@ -19,6 +19,16 @@ const (
 	AccountTypeMoneyMarket  AccountType = "money_market"  // Money market account
 )
 
+// ContribBasis determines how the monthly contribution is calculated.
+type ContribBasis string
+
+const (
+	ContribBasisFixed     ContribBasis = "fixed"     // set dollar amount
+	ContribBasisGross     ContribBasis = "gross"     // percentage of gross income
+	ContribBasisNet       ContribBasis = "net"       // percentage of net income
+	ContribBasisRemainder ContribBasis = "remainder" // percentage of remaining cash flow after constraints
+)
+
 // AssetAllocation defines the portfolio split across asset classes.
 // All values are fractions that must sum to 1.0.
 type AssetAllocation struct {
@@ -34,7 +44,9 @@ type InvestmentAccount struct {
 	Name             string          `json:"name"`
 	Type             AccountType     `json:"type"`
 	Balance          float64         `json:"balance"`           // starting balance at plan start
-	MonthlyContrib   float64         `json:"monthly_contrib"`   // regular monthly contribution
+	MonthlyContrib   float64         `json:"monthly_contrib"`   // regular monthly contribution (used if basis = fixed)
+	ContribBasis     ContribBasis    `json:"contrib_basis"`     // e.g., fixed, gross, net, remainder
+	ContribPercent   float64         `json:"contrib_percent"`   // percentage used if basis != fixed
 	EmployerMatch    float64         `json:"employer_match"`    // fraction of salary matched, e.g. 0.04
 	EmployerMatchCap float64         `json:"employer_match_cap"` // max salary fraction matched, e.g. 0.04
 	AssetAllocation  AssetAllocation `json:"asset_allocation"`
@@ -72,6 +84,7 @@ type GivingTarget struct {
 type GivingBasis string
 
 const (
-	GivingBasisGross GivingBasis = "gross" // before taxes
-	GivingBasisNet   GivingBasis = "net"   // after taxes
+	GivingBasisGross     GivingBasis = "gross"     // before taxes
+	GivingBasisNet       GivingBasis = "net"       // after taxes
+	GivingBasisRemainder GivingBasis = "remainder" // percentage of remaining cash flow after constraints
 )

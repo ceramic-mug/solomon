@@ -61,7 +61,7 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 		// Apply any life events firing this month
 		for _, ev := range events {
 			if ev.Month == m {
-				applyLifeEvent(ev, incomes, expenses, debts, investments)
+				applyLifeEvent(ev, incomes, expenses, debts, investments, &cfg)
 			}
 		}
 
@@ -105,14 +105,25 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 		// ---- AGI for IDR calculation ----
 		agi := (annualGross - annualPreTax) / 12 * 12 // annual AGI
 
-		// ---- Giving ----
-		var totalGiving float64
+		// ---- Giving (Predetermined) ----
+		var totalGiving float64 // declared here for scoping
+		var totalFixedGiving float64
+		type givingRemainder struct {
+			index int
+			pct   float64
+		}
+		var givingRemainders []givingRemainder
 		givingItems := make([]float64, len(plan.GivingTargets))
+
 		for i, g := range plan.GivingTargets {
 			if m < g.StartMonth {
 				continue
 			}
 			if g.EndMonth != nil && m > *g.EndMonth {
+				continue
+			}
+			if g.Basis == domain.GivingBasisRemainder {
+				givingRemainders = append(givingRemainders, givingRemainder{index: i, pct: g.Percentage})
 				continue
 			}
 			if g.FixedAmount != nil {
@@ -124,7 +135,7 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 				}
 				givingItems[i] = base * g.Percentage
 			}
-			totalGiving += givingItems[i]
+			totalFixedGiving += givingItems[i]
 		}
 
 		// ---- Expenses ----
@@ -205,28 +216,48 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 			}
 		}
 
-		// ---- Investment & Savings contributions (pre-calculation) ----
+		// ---- Investment & Savings contributions (Predetermined) ----
 		type invContrib struct {
-			index   int
-			amount  float64
+			index     int
+			amount    float64
 			isSavings bool
 		}
+		type invRemainder struct {
+			index int
+			pct   float64
+		}
 		desiredInvestContribs := make([]invContrib, 0, len(investments))
+		var investRemainders []invRemainder
 		var totalDesiredInvest float64
 
 		for i, inv := range investments {
 			if m < inv.StartMonth {
 				continue
 			}
-			contrib := inv.MonthlyContrib
-			// Enforce IRS annual limits (employee contributions only)
+			
+			if inv.ContribBasis == domain.ContribBasisRemainder {
+				investRemainders = append(investRemainders, invRemainder{index: i, pct: inv.ContribPercent})
+				continue
+			}
+
+			var contrib float64
+			switch inv.ContribBasis {
+			case domain.ContribBasisGross:
+				contrib = grossIncome * inv.ContribPercent
+			case domain.ContribBasisNet:
+				contrib = netIncome * inv.ContribPercent
+			default:
+				contrib = inv.MonthlyContrib // fallback/default to fixed
+			}
+
+			// Enforce IRS annual limits (employee contributions only) for predetermined
 			limit, hasLimit := domain.IRSLimits2026[inv.Type]
 			if hasLimit {
 				annualSoFar := yearlyContribs[inv.Type]
 				headroom := limit - annualSoFar
 				if headroom <= 0 {
 					contrib = 0
-				} else if inv.MonthlyContrib > headroom {
+				} else if contrib > headroom {
 					contrib = headroom
 				}
 			}
@@ -237,100 +268,80 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 		}
 
 		// ---- Cash Flow Constrainer Logic ----
-		// Calculate cash flow BEFORE giving and investment
 		baseCashFlow := netIncome - totalExpenses - totalDebtPayments
-		targetCF := cfg.TargetCashFlow
-		
-		// If baseCashFlow is already below target, we definitely need to cut.
-		// If not, we check if applying giving and investment pushes us below target.
-		
-		availableForOutflows := baseCashFlow - targetCF
-		if availableForOutflows < 0 {
-			availableForOutflows = 0
+		targetCF := 0.0
+		if cfg.TargetCashFlow > 1.0 {
+			targetCF = cfg.TargetCashFlow * math.Pow(1+cfg.InflationRate, float64(m)/12.0)
+		} else {
+			targetCF = cfg.TargetCashFlow * netIncome
 		}
 
-		// Priority 1: Investment (cut first if cfg.ConstrainInvestments)
-		// Priority 2: Giving (cut second if cfg.ConstrainGiving)
-		// Priority 3: Savings (cut third if cfg.ConstrainSavings)
-		
+		// ---- Outflow Allocation (Predetermined) ----
 		actualInvestContribs := make([]float64, len(investments))
 		actualGiving := make([]float64, len(plan.GivingTargets))
-		
-		// Temporary variables for iterative cutting
-		remainingAvailable := availableForOutflows
 
-		// 1. Handle non-savings investments
-		var totalDesiredNonSavings float64
 		for _, dc := range desiredInvestContribs {
-			if !dc.isSavings {
-				totalDesiredNonSavings += dc.amount
-			}
+			actualInvestContribs[dc.index] = dc.amount
+		}
+		for i := range actualGiving {
+			actualGiving[i] = givingItems[i]
 		}
 
-		if cfg.ConstrainInvestments && totalDesiredNonSavings > remainingAvailable {
-			ratio := 0.0
-			if totalDesiredNonSavings > 0 {
-				ratio = remainingAvailable / totalDesiredNonSavings
-			}
-			for _, dc := range desiredInvestContribs {
-				if !dc.isSavings {
-					actualInvestContribs[dc.index] = dc.amount * ratio
-				}
-			}
-			remainingAvailable = 0
-		} else {
-			for _, dc := range desiredInvestContribs {
-				if !dc.isSavings {
-					actualInvestContribs[dc.index] = dc.amount
-					remainingAvailable -= dc.amount
-				}
-			}
+		// Calculate how much cash flow is actually left after predetermined outflows
+		totalActualPredeterminedOutflows := 0.0
+		for _, amt := range actualInvestContribs {
+			totalActualPredeterminedOutflows += amt
 		}
-		if remainingAvailable < 0 { remainingAvailable = 0 }
-
-		// 2. Handle Giving
-		if cfg.ConstrainGiving && totalGiving > remainingAvailable {
-			ratio := 0.0
-			if totalGiving > 0 {
-				ratio = remainingAvailable / totalGiving
-			}
-			for i := range actualGiving {
-				actualGiving[i] = givingItems[i] * ratio
-			}
-			remainingAvailable = 0
-		} else {
-			for i := range actualGiving {
-				actualGiving[i] = givingItems[i]
-				remainingAvailable -= givingItems[i]
-			}
-		}
-		if remainingAvailable < 0 { remainingAvailable = 0 }
-
-		// 3. Handle Savings
-		var totalDesiredSavings float64
-		for _, dc := range desiredInvestContribs {
-			if dc.isSavings {
-				totalDesiredSavings += dc.amount
-			}
+		for _, amt := range actualGiving {
+			totalActualPredeterminedOutflows += amt
 		}
 
-		if cfg.ConstrainSavings && totalDesiredSavings > remainingAvailable {
-			ratio := 0.0
-			if totalDesiredSavings > 0 {
-				ratio = remainingAvailable / totalDesiredSavings
+		// ---- Remainder Allocation (Overflow Sweep) ----
+		availableForRemainder := baseCashFlow - totalActualPredeterminedOutflows - targetCF
+		if availableForRemainder < 0 {
+			availableForRemainder = 0
+		}
+
+		if availableForRemainder > 0 && (len(givingRemainders) > 0 || len(investRemainders) > 0) {
+			totalPct := 0.0
+			for _, gr := range givingRemainders {
+				totalPct += gr.pct
 			}
-			for _, dc := range desiredInvestContribs {
-				if dc.isSavings {
-					actualInvestContribs[dc.index] = dc.amount * ratio
-				}
+			for _, ir := range investRemainders {
+				totalPct += ir.pct
 			}
-			remainingAvailable = 0
-		} else {
-			for _, dc := range desiredInvestContribs {
-				if dc.isSavings {
-					actualInvestContribs[dc.index] = dc.amount
-					remainingAvailable -= dc.amount
+
+			normalizationFactor := 1.0
+			if totalPct > 1.0 {
+				normalizationFactor = totalPct
+			} else if totalPct == 0 {
+				normalizationFactor = 1.0
+			}
+
+			// Apply to Giving
+			for _, gr := range givingRemainders {
+				amt := (availableForRemainder * gr.pct) / normalizationFactor
+				actualGiving[gr.index] += amt
+			}
+
+			// Apply to Investments
+			for _, ir := range investRemainders {
+				amt := (availableForRemainder * ir.pct) / normalizationFactor
+				inv := investments[ir.index]
+
+				// Apply IRS constraints to this remainder portion
+				limit, hasLimit := domain.IRSLimits2026[inv.Type]
+				if hasLimit {
+					annualSoFar := yearlyContribs[inv.Type]
+					// Include ANY predetermined amount processed this month
+					headroom := limit - (annualSoFar + actualInvestContribs[ir.index])
+					if headroom <= 0 {
+						amt = 0
+					} else if amt > headroom {
+						amt = headroom
+					}
 				}
+				actualInvestContribs[ir.index] += amt
 			}
 		}
 
@@ -542,9 +553,12 @@ func applyLifeEvent(ev domain.LifeEvent,
 	expenses []domain.Expense,
 	debts []domain.DebtAccount,
 	investments []domain.InvestmentAccount,
+	cfg *domain.SimulationConfig,
 ) {
 	for _, imp := range ev.Impacts {
 		switch imp.TargetType {
+		case "simulation_config":
+			applyImpactToConfig(cfg, imp)
 		case "income_stream":
 			for i, s := range incomes {
 				if s.ID == imp.TargetID {
@@ -624,6 +638,13 @@ func applyImpactToInvestment(inv domain.InvestmentAccount, imp domain.EventImpac
 		inv.Balance = applyImpact(inv.Balance, imp)
 	}
 	return inv
+}
+
+func applyImpactToConfig(cfg *domain.SimulationConfig, imp domain.EventImpact) {
+	switch imp.Field {
+	case "target_cash_flow":
+		cfg.TargetCashFlow = applyImpact(cfg.TargetCashFlow, imp)
+	}
 }
 
 // ensure math import used

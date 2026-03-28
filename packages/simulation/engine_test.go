@@ -452,6 +452,158 @@ func TestMonteCarlo_ProducesPercentiles(t *testing.T) {
 		result.MonteCarlo.P10[last], result.MonteCarlo.P50[last], result.MonteCarlo.P90[last])
 }
 
+func TestEngine_AdaptiveRemainderAllocation(t *testing.T) {
+	plan := basePlan()
+	// High income: $20,000 gross per month
+	plan.IncomeStreams = []domain.IncomeStream{
+		{
+			ID:          uuid.New(),
+			PlanID:      plan.ID,
+			Type:        domain.IncomeTypeSalary,
+			TaxCategory: domain.TaxCategoryW2,
+			Amount:      20_000, 
+			StartMonth:  0,
+		},
+	}
+	
+	// Force a fairly high target cash flow constraint so we can see remainder math clearly
+	plan.SimulationConfig.TargetCashFlow = 5000 // Keep $5,000 unallocated
+
+	// Define Remainder Targets: 
+	// 50% to GivingTarget, 50% to Taxable Investment
+	// Since sum <= 1.0, they should split the remainder 50/50
+	plan.GivingTargets = []domain.GivingTarget{
+		{
+			ID:         uuid.New(),
+			PlanID:     plan.ID,
+			Name:       "Remainder Giving",
+			Basis:      domain.GivingBasisRemainder,
+			Percentage: 0.50,
+			StartMonth: 0,
+		},
+	}
+	
+	plan.InvestmentAccounts = []domain.InvestmentAccount{
+		{
+			ID:              uuid.New(),
+			PlanID:          plan.ID,
+			Type:            domain.AccountTypeTaxable,
+			ContribBasis:    domain.ContribBasisRemainder,
+			ContribPercent:  0.50,
+			AssetAllocation: stockAlloc(),
+			StartMonth:      0,
+		},
+	}
+
+	opts := baseOpts()
+	result := simulation.Run(plan, opts)
+
+	first := result.MonthlySnapshot[0]
+	
+	// Math expectation for Month 1 (roughly):
+	// Gross = $20,000. 
+	// Tax let's assume is around $4,000. Net Income ≈ $16,000
+	// TargetCashFlow = $5,000
+	// Fixed outflows = 0
+	// Available for remainder = Net - Target = $16,000 - $5,000 = $11,000
+	// 50% to giving = $5,500
+	// 50% to investing = $5,500
+	// Final cash flow should be TargetCashFlow = $5,000
+	
+	// Ensure the remainder targets received identical amounts (since both are 50%)
+	if math.Abs(first.TotalGiving - first.TotalInvestContrib) > 1.0 {
+		t.Errorf("expected 50/50 split of remainder, got Giving=%.2f, InvestContrib=%.2f", first.TotalGiving, first.TotalInvestContrib)
+	}
+	
+	// Ensure the cash flow constraint was hit cleanly or at least bounded
+	if first.CashFlow < plan.SimulationConfig.TargetCashFlow {
+		t.Errorf("cash flow (%.2f) dipped below target (%.2f)", first.CashFlow, plan.SimulationConfig.TargetCashFlow)
+	}
+	
+	// The difference between net income and total outflows should roughly equal target CF
+	// (Net Income - Total Giving - Total Invest Contrib ≈ Target CF)
+	t.Logf("Net Income: %.2f  Giving: %.2f  Invest: %.2f  CashFlow: %.2f (Target: %.2f)",
+		first.NetIncome, first.TotalGiving, first.TotalInvestContrib, first.CashFlow, plan.SimulationConfig.TargetCashFlow)
+}
+
+func TestEngine_DynamicTargetCashFlow(t *testing.T) {
+	plan := basePlan()
+	// High income so we have plenty to test constraining
+	plan.IncomeStreams = []domain.IncomeStream{
+		{
+			ID:          uuid.New(),
+			PlanID:      plan.ID,
+			Type:        domain.IncomeTypeSalary,
+			TaxCategory: domain.TaxCategoryW2,
+			Amount:      20_000,
+			StartMonth:  0,
+		},
+	}
+
+	plan.SimulationConfig.TargetCashFlow = 5000
+	plan.SimulationConfig.InflationRate = 0.03
+	plan.SimulationConfig.HorizonYears = 10
+
+	// Huge giving target that will force the constrainer to kick in and push CashFlow down to EXACTLY TargetCashFlow
+	plan.GivingTargets = []domain.GivingTarget{
+		{
+			ID:         uuid.New(),
+			PlanID:     plan.ID,
+			Name:       "Massive Giving",
+			Basis:      domain.GivingBasisGross,
+			Percentage: 0.90, // tries to give 90% of gross
+			StartMonth: 0,
+		},
+	}
+	plan.SimulationConfig.ConstrainGiving = true
+
+	// Life event at month 60 to manually bump TargetCashFlow
+	plan.LifeEvents = []domain.LifeEvent{
+		{
+			ID:     uuid.New(),
+			PlanID: plan.ID,
+			Name:   "Attending Transition Bump",
+			Type:   domain.EventTypeMilestone,
+			Month:  60,
+			Impacts: []domain.EventImpact{
+				{
+					ID:         uuid.New(),
+					TargetType: "simulation_config",
+					Field:      "target_cash_flow",
+					NewValue:   10_000,
+					Operation:  "set",
+				},
+			},
+		},
+	}
+
+	opts := baseOpts()
+	result := simulation.Run(plan, opts)
+
+	snap0 := result.MonthlySnapshot[0]
+	snap12 := result.MonthlySnapshot[12]
+	snap60 := result.MonthlySnapshot[60] // month of life event
+
+	// Month 0: cash flow should be tightly constrained to exactly 5000
+	if math.Abs(snap0.CashFlow-5000) > 1.0 {
+		t.Errorf("expected constrained cash flow of ~5000 in m0, got %.2f", snap0.CashFlow)
+	}
+
+	// Month 12: due to 3% inflation, target CF should be higher
+	expectedM12CF := 5000 * math.Pow(1.03, 1.0)
+	if math.Abs(snap12.CashFlow-expectedM12CF) > 1.0 {
+		t.Errorf("expected inflation-adjusted cash flow of ~%.2f in m12, got %.2f", expectedM12CF, snap12.CashFlow)
+	}
+
+	// Month 60: life event overwrites base target to 10_000, preserving purchasing power going forward?
+	// Wait, at month 60 exactly, the math applies inflation to the NEW base of 10_000.
+	// 60 months = 5 years. Target = 10_000 * (1.03^5) ≈ 11,592
+	expectedM60CF := 10_000 * math.Pow(1.03, 5.0)
+	if math.Abs(snap60.CashFlow-expectedM60CF) > 1.0 {
+		t.Errorf("expected life-event adjusted cash flow of ~%.2f at m60, got %.2f", expectedM60CF, snap60.CashFlow)
+	}
+}
+
 // TestComparePlans verifies the comparison helper returns sensible deltas.
 func TestComparePlans(t *testing.T) {
 	planA := basePlan()
