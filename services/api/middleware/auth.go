@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -21,8 +22,8 @@ type Claims struct {
 var JWTSecret []byte
 
 const (
-	accessTokenDuration  = 15 * time.Minute
-	refreshTokenDuration = 30 * 24 * time.Hour
+	accessTokenDuration  = 12 * time.Hour      // long enough for a full dev session
+	refreshTokenDuration = 90 * 24 * time.Hour // 90 days
 )
 
 // GenerateAccessToken creates a short-lived JWT for API access.

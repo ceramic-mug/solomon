@@ -3,7 +3,7 @@ package postgres
 import (
 	"fmt"
 
-	"gorm.io/driver/postgres"
+	pg "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -13,7 +13,7 @@ import (
 //
 //	postgres://solomon:solomon@localhost:5432/solomon?sslmode=disable
 func Open(dsn string) (*gorm.DB, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+	db, err := gorm.Open(pg.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {

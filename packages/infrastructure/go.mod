@@ -7,8 +7,8 @@ require (
 	github.com/solomon/domain v0.0.0
 	golang.org/x/crypto v0.49.0
 	gorm.io/datatypes v1.2.7
-	gorm.io/driver/postgres v1.5.0
-	gorm.io/gorm v1.30.0
+	gorm.io/driver/postgres v1.5.9
+	gorm.io/gorm v1.25.12
 )
 
 replace github.com/solomon/domain => ../domain

@@ -31,7 +31,10 @@ func ProcessPSLFMonth(state PSLFState, paymentMade float64, balance float64, isE
 		return state
 	}
 
-	if paymentMade > 0 {
+	// Under qualifying IDR/PAYE/SAVE plans, a $0 calculated payment still counts
+	// as a qualifying PSLF payment (the government covers unpaid interest under SAVE).
+	// The caller only reaches here when the loan is on a qualifying plan and employer is eligible.
+	if paymentMade >= 0 {
 		state.QualifyingPayments++
 	}
 

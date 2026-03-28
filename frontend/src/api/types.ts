@@ -176,6 +176,8 @@ export interface MonthSnapshot {
   total_investments: number
   net_worth: number
   pslf_qualifying_payments?: number
+  debt_balances?: Record<string, number>
+  investment_balances?: Record<string, number>
 }
 
 export interface MonteCarloResult {

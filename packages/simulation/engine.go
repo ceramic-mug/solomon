@@ -145,17 +145,17 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 				continue
 			}
 
-			payment := d.MinPayment + d.ExtraPayment
-
-			// Override with IDR calculation if applicable
+			// For IDR/PAYE/SAVE plans, payment IS the income-driven amount (min_payment is irrelevant).
+			// Extra payment is still additive (e.g., user wants to pay down faster).
+			// For standard plans, use min_payment + extra_payment.
+			var payment float64
 			if d.RepaymentPlan == domain.RepaymentPlanIDR ||
 				d.RepaymentPlan == domain.RepaymentPlanPAYE ||
 				d.RepaymentPlan == domain.RepaymentPlanSAVE {
 				poverty := PovertyGuideline2026(opts.HouseholdSize)
-				idrPayment := IDRMonthlyPayment(agi, poverty)
-				if idrPayment < payment {
-					payment = idrPayment
-				}
+				payment = IDRMonthlyPayment(agi, poverty) + d.ExtraPayment
+			} else {
+				payment = d.MinPayment + d.ExtraPayment
 			}
 
 			step := ProcessDebtMonth(d.Balance, d.InterestRate, payment)
@@ -178,9 +178,11 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 			}
 		}
 
-		// Sum remaining debt
+		// Sum remaining debt + capture per-debt balances
+		debtBals := make(map[string]float64, len(debts))
 		for _, d := range debts {
 			totalDebt += d.Balance
+			debtBals[d.ID.String()] = d.Balance
 		}
 
 		// ---- Investment contributions & compounding ----
@@ -259,6 +261,12 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 			totalCashPct /= totalBalance
 		}
 
+		// Per-investment balance snapshot
+		invBals := make(map[string]float64, len(investments))
+		for _, inv := range investments {
+			invBals[inv.ID.String()] = inv.Balance
+		}
+
 		cashFlow := netIncome - totalExpenses - totalDebtPayments - totalGiving - totalInvestContrib
 		netWorth := totalInvestments - totalDebt
 
@@ -278,6 +286,8 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 			TotalDebt:          totalDebt,
 			TotalInvestments:   totalInvestments,
 			NetWorth:           netWorth,
+			DebtBalances:       debtBals,
+			InvestmentBalances: invBals,
 		}
 		if totalPSLFQualifying > 0 {
 			snap.PSLFQualifyingPayments = totalPSLFQualifying
