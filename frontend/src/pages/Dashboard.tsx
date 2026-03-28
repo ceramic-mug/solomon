@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listPlans, createPlan, getPlan, simulate, comparePlans, compareRepayment } from '../api/client'
+import { listPlans, createPlan, getPlan, simulate, comparePlans, compareRepayment, updatePlan } from '../api/client'
 import { usePlanStore } from '../store/plan'
 import FinancialOverviewChart from '../components/charts/FinancialOverviewChart'
 import DebtTrajectoryChart from '../components/charts/DebtTrajectoryChart'
@@ -14,10 +14,12 @@ import DebtFreedomPanel from '../components/panels/DebtFreedomPanel'
 import GoalsPanel from '../components/panels/GoalsPanel'
 import SensitivityPanel from '../components/panels/SensitivityPanel'
 import SimpleAgent from '../components/chat/SimpleAgent'
-import type { Plan, MonthSnapshot } from '../api/types'
+import PlanBuilderWizard from '../components/wizard/PlanBuilderWizard'
+import type { Plan, MonthSnapshot, SimulationConfig } from '../api/types'
 import {
   Plus, GitBranch, TrendingUp, DollarSign, CreditCard, Landmark,
   MessageSquare, CalendarRange, Heart, Wallet, Calendar, RefreshCw, Lock, X,
+  ShieldCheck, Zap, Settings2, HelpCircle, Sparkles, ChevronRight
 } from 'lucide-react'
 import { IncomeTab, ExpensesTab, DebtsTab, InvestmentsTab, EventsTab, GivingTab } from '../components/forms/PlanComponents'
 
@@ -48,7 +50,6 @@ function findPSLFSnap(snapshots: MonthSnapshot[]) {
   return snapshots.find(s => (s.pslf_qualifying_payments ?? 0) >= 120) ?? null
 }
 
-/** Last snapshot in a given calendar year */
 function findSnapForYear(snapshots: MonthSnapshot[], year: number): MonthSnapshot | null {
   const hits = snapshots.filter(s => s.year === year)
   return hits[hits.length - 1] ?? null
@@ -105,6 +106,8 @@ export default function Dashboard() {
   const qc = useQueryClient()
   const { activePlanId, setActivePlan, setPlans } = usePlanStore()
   const [showCreate, setShowCreate] = useState(false)
+  const [showWizard, setShowWizard] = useState(false)
+  const [showConfig, setShowConfig] = useState(false)
   const [newName, setNewName] = useState('')
   const [tab, setTab] = useState<TabType>('income')
   const [chartView, setChartView] = useState<ChartView>('overview')
@@ -125,7 +128,6 @@ export default function Dashboard() {
     if (activePlan_id && activePlan_id !== activePlanId) setActivePlan(activePlan_id)
   }, [activePlan_id])
 
-  // Reset time-lock when switching plans
   useEffect(() => {
     setLockedYear(null)
     setHoveredYear(null)
@@ -155,6 +157,19 @@ export default function Dashboard() {
     enabled: !!activePlan_id && chartView === 'repayment',
   })
 
+  const updateConfigMutation = useMutation({
+    mutationFn: (config: Partial<SimulationConfig>) => 
+      updatePlan(activePlan_id!, { 
+        name: activePlan?.name ?? '', 
+        description: activePlan?.description ?? '',
+        simulation_config: { ...activePlan!.simulation_config, ...config } 
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['plan', activePlan_id] })
+      qc.invalidateQueries({ queryKey: ['simulate', activePlan_id] })
+    }
+  })
+
   const createMutation = useMutation({
     mutationFn: () => createPlan(newName || 'My Plan', ''),
     onSuccess: (plan) => {
@@ -180,7 +195,6 @@ export default function Dashboard() {
   const hasDebts = debtAccounts.length > 0
   const hasStudentLoans = debtAccounts.some(d => d.type === 'student_loan')
   const hasPSLF = debtAccounts.some(d => d.pslf_eligible)
-  const hasGiving = (firstSnap?.total_giving ?? 0) > 0 || (activePlan?.giving_targets?.length ?? 0) > 0
   const hasInvestments = (activePlan?.investment_accounts?.length ?? 0) > 0
   const multiPlan = plans.length > 1
 
@@ -189,13 +203,11 @@ export default function Dashboard() {
     .filter(d => d.pslf_eligible)
     .reduce((max, d) => Math.max(max, d.pslf_payments_made ?? 0), 0)
 
-  // ── Time-travel: active snapshot + annual aggregates ──
   const activeYear = lockedYear ?? hoveredYear
   const activeSnap = activeYear ? (findSnapForYear(snapshots, activeYear) ?? firstSnap) : firstSnap
   const isTimeTravel = activeSnap != null && activeSnap !== firstSnap
   const isPastDebtFree = debtFreeSnap != null && activeYear != null && activeYear > debtFreeSnap.year
 
-  // When time-travelling, aggregate the full year for flow metrics (more intuitive than a single December month)
   const annualForYear = activeYear ? (() => {
     const yr = snapshots.filter(s => s.year === activeYear)
     if (!yr.length) return null
@@ -206,11 +218,9 @@ export default function Dashboard() {
       cashFlow:      yr.reduce((s, m) => s + m.cash_flow, 0),
       debtPayments:  yr.reduce((s, m) => s + m.total_debt_payments, 0),
       interestPaid:  yr.reduce((s, m) => s + m.total_interest_paid, 0),
-      // Stock values from end-of-year snapshot
       totalDebt:     last.total_debt,
       totalInvestments: last.total_investments,
       netWorth:      last.net_worth,
-      // PSLF: if forgiveness has happened by this year, pin at 120
       pslfCount: (pslfSnap && activeYear >= pslfSnap.year)
         ? 120
         : Math.min(last.pslf_qualifying_payments ?? 0, 120),
@@ -225,7 +235,6 @@ export default function Dashboard() {
     setHoveredYear(null)
   }
 
-  // ── Chart views (context-aware) ──
   const tabs: { key: TabType; label: string; icon: React.ReactNode }[] = [
     { key: 'income',      label: 'Income',   icon: <DollarSign size={13} /> },
     { key: 'expenses',    label: 'Expenses', icon: <CreditCard size={13} /> },
@@ -245,35 +254,37 @@ export default function Dashboard() {
     { key: 'comparison', label: 'vs. Plan',        show: multiPlan },
   ]
   const chartViews = allChartViews.filter(v => v.show)
-
-  // If current chartView is hidden (e.g. debts removed), fall back to overview
   const validView = chartViews.some(v => v.key === chartView) ? chartView : 'overview'
-
   const comparePlan = plans.find(p => p.id === comparePlanId)
+  const activePlanForks = plans.filter(p => p.parent_plan_id === activePlan_id)
 
   return (
     <div className="p-4 lg:p-6 max-w-[1500px] mx-auto space-y-5">
+      {showWizard && activePlan_id && (
+        <PlanBuilderWizard planId={activePlan_id} onClose={() => setShowWizard(false)} />
+      )}
 
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            Dashboard
+            {activePlan?.created_by_ai && <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full uppercase tracking-wider font-bold">AI Fork</span>}
+          </h1>
           <p className="text-gray-500 text-sm mt-0.5">Your financial sandbox</p>
         </div>
         <div className="flex items-center gap-2">
-          {simFetching ? (
-            <span className="flex items-center gap-1.5 text-xs text-gray-500">
+          {simFetching && (
+            <span className="flex items-center gap-1.5 text-xs text-gray-500 mr-2">
               <RefreshCw size={12} className="animate-spin" /> Simulating…
             </span>
-          ) : activePlan_id ? (
-            <button
-              onClick={() => refetchSim()}
-              className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1.5 rounded hover:bg-gray-800"
-              title="Re-run simulation"
-            >
-              <RefreshCw size={12} /> Refresh
-            </button>
-          ) : null}
+          )}
+          <button 
+            onClick={() => setShowWizard(true)}
+            className="btn-ghost flex items-center gap-2 text-blue-400 border border-blue-400/20 hover:bg-blue-400/10"
+          >
+            <Sparkles size={15} /> Guided Builder
+          </button>
           <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
             <Plus size={15} /> New Plan
           </button>
@@ -311,7 +322,7 @@ export default function Dashboard() {
           </div>
           <h2 className="text-lg font-semibold text-white mb-2">No plans yet</h2>
           <p className="text-gray-500 text-sm mb-6 max-w-sm">
-            Create your first financial plan to start modeling your future — income, debt, investments, and giving.
+            Create your first financial plan to start modeling your future.
           </p>
           <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
             <Plus size={16} /> Create your first plan
@@ -319,28 +330,60 @@ export default function Dashboard() {
         </div>
       ) : (
         <>
-          {/* Plan selector tabs */}
-          <div className="flex gap-2 overflow-x-auto pb-1 border-b border-gray-800">
-            {plans.map(plan => (
-              <button
-                key={plan.id}
-                onClick={() => setActivePlan(plan.id)}
-                className={`flex-shrink-0 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
-                  plan.id === activePlan_id
-                    ? 'border-blue-500 text-blue-400'
-                    : 'border-transparent text-gray-500 hover:text-gray-300'
-                }`}
-              >
-                {plan.created_by_ai && <span className="mr-1.5">✨</span>}
-                {plan.name}
-                {plan.parent_plan_id && <GitBranch size={12} className="inline ml-1.5 opacity-60" />}
-              </button>
-            ))}
+          {/* Plan Navigation & Scenarios */}
+          <div className="space-y-4">
+            <div className="flex gap-2 overflow-x-auto pb-1 border-b border-gray-800 scrollbar-hide">
+              {plans.filter(p => !p.parent_plan_id).map(plan => (
+                <button
+                  key={plan.id}
+                  onClick={() => setActivePlan(plan.id)}
+                  className={`flex-shrink-0 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
+                    plan.id === activePlan_id || activePlan?.parent_plan_id === plan.id
+                      ? 'border-blue-500 text-blue-400'
+                      : 'border-transparent text-gray-500 hover:text-gray-300'
+                  }`}
+                >
+                  {plan.name}
+                </button>
+              ))}
+            </div>
+
+            {(activePlan?.parent_plan_id || activePlanForks.length > 0) && (
+              <div className="flex items-center gap-3 py-1">
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-gray-600 uppercase tracking-widest bg-gray-900 px-2 py-1 rounded">
+                  <GitBranch size={10} /> Scenarios
+                </div>
+                <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+                  {activePlan?.parent_plan_id && (
+                    <button
+                      onClick={() => setActivePlan(activePlan.parent_plan_id!)}
+                      className="flex-shrink-0 px-3 py-1.5 text-xs font-medium rounded-full bg-gray-800 text-gray-400 hover:text-white transition-colors flex items-center gap-1.5"
+                    >
+                      <span className="opacity-50">Parent:</span> {plans.find(p => p.id === activePlan.parent_plan_id)?.name}
+                    </button>
+                  )}
+                  {activePlanForks.map(fork => (
+                    <button
+                      key={fork.id}
+                      onClick={() => setActivePlan(fork.id)}
+                      className={`flex-shrink-0 px-3 py-1.5 text-xs font-medium rounded-full transition-colors flex items-center gap-1.5 border ${
+                        fork.id === activePlan_id
+                          ? 'bg-blue-900/40 border-blue-700 text-blue-300'
+                          : 'bg-gray-800 border-gray-700 text-gray-500 hover:text-gray-300'
+                      }`}
+                    >
+                      {fork.created_by_ai && <Sparkles size={10} className="text-blue-400" />}
+                      {fork.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {activePlan && (
             <>
-              {/* ── Time-travel context bar ── */}
+              {/* Time-travel context bar */}
               {firstSnap && (
                 <div className="flex items-center gap-3 min-h-[24px]">
                   {isTimeTravel ? (
@@ -353,46 +396,30 @@ export default function Dashboard() {
                         <>
                           <Lock size={11} className="text-blue-400" />
                           <span className="text-[10px] text-blue-400">locked</span>
-                          <button
-                            onClick={() => setLockedYear(null)}
-                            className="text-gray-600 hover:text-red-400 transition-colors"
-                            title="Unlock"
-                          >
+                          <button onClick={() => setLockedYear(null)} className="text-gray-600 hover:text-red-400 transition-colors">
                             <X size={12} />
                           </button>
                         </>
                       )}
-                      <span className="text-[10px] text-gray-600 ml-1">
-                        {hoveredYear && !lockedYear ? '— click chart to lock' : ''}
-                      </span>
-                      <button
-                        onClick={() => { setLockedYear(null); setHoveredYear(null) }}
-                        className="text-[10px] text-gray-600 hover:text-gray-400 ml-auto"
-                      >
+                      <button onClick={() => { setLockedYear(null); setHoveredYear(null) }} className="text-[10px] text-gray-600 hover:text-gray-400 ml-auto">
                         ← Back to now
                       </button>
                     </>
-                  ) : firstSnap ? (
+                  ) : (
                     <span className="text-[10px] text-gray-600">
                       Hover the overview chart to explore any year · click to lock
                     </span>
-                  ) : null}
+                  )}
                 </div>
               )}
 
-              {/* ── Stat strip ── */}
+              {/* Stat strip */}
               {firstSnap && (
-                <div className={`grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 transition-all ${
-                  isTimeTravel ? 'ring-1 ring-gray-700/50 rounded-xl p-1 -m-1' : ''
-                }`}>
-                  {/* Flow cards: monthly in default view, annual when time-travelling */}
+                <div className={`grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 transition-all ${isTimeTravel ? 'ring-1 ring-gray-700/50 rounded-xl p-1 -m-1' : ''}`}>
                   <StatCard
                     label={isTimeTravel ? `Annual Net Income (${activeYear})` : 'Monthly Net Income'}
                     value={isTimeTravel ? fmt(annualForYear?.netIncome) : fmt(firstSnap.net_income)}
-                    sub={isTimeTravel
-                      ? `Gross: ${fmt(annualForYear?.grossIncome)}`
-                      : `Gross: ${fmt(firstSnap.gross_income)}/mo`
-                    }
+                    sub={isTimeTravel ? `Gross: ${fmt(annualForYear?.grossIncome)}` : `Gross: ${fmt(firstSnap.gross_income)}/mo`}
                     icon={<DollarSign size={14} />}
                     accent="green"
                   />
@@ -406,15 +433,11 @@ export default function Dashboard() {
                   <StatCard
                     label={isTimeTravel ? `Annual Debt Service (${activeYear})` : 'Monthly Debt Service'}
                     value={isTimeTravel ? fmt(annualForYear?.debtPayments) : fmt(firstSnap.total_debt_payments)}
-                    sub={isTimeTravel
-                      ? `Interest: ${fmt(annualForYear?.interestPaid)}/yr`
-                      : `Interest: ${fmt(firstSnap.total_interest_paid)}/mo`
-                    }
+                    sub={isTimeTravel ? `Interest: ${fmt(annualForYear?.interestPaid)}/yr` : `Interest: ${fmt(firstSnap.total_interest_paid)}/mo`}
                     icon={<CreditCard size={14} />}
                     accent="orange"
                     dimmed={isPastDebtFree && (annualForYear?.debtPayments ?? 0) === 0}
                   />
-                  {/* Milestone: always from full simulation */}
                   <StatCard
                     label="Debt-Free Date"
                     value={debtFreeSnap ? calLabel(debtFreeSnap.calendar_month, debtFreeSnap.year) : (hasDebts ? 'Not in 30yr' : 'No debt')}
@@ -423,21 +446,11 @@ export default function Dashboard() {
                     accent={debtFreeSnap ? 'green' : (hasDebts ? 'red' : 'default')}
                     dimmed={isTimeTravel}
                   />
-                  {/* PSLF (when applicable) or total debt */}
                   {hasPSLF ? (
                     <StatCard
                       label={isTimeTravel ? `PSLF Progress (${activeYear})` : 'PSLF Progress'}
-                      value={isTimeTravel
-                        ? `${annualForYear?.pslfCount ?? startingPSLFPayments}/120`
-                        : `${startingPSLFPayments}/120`
-                      }
-                      sub={
-                        isTimeTravel && (annualForYear?.pslfCount ?? 0) >= 120
-                          ? '✓ Forgiven'
-                          : pslfSnap
-                            ? `Forgiveness: ${calLabel(pslfSnap.calendar_month, pslfSnap.year)}`
-                            : 'No forgiveness in 30yr'
-                      }
+                      value={isTimeTravel ? `${annualForYear?.pslfCount ?? startingPSLFPayments}/120` : `${startingPSLFPayments}/120`}
+                      sub={isTimeTravel && (annualForYear?.pslfCount ?? 0) >= 120 ? '✓ Forgiven' : pslfSnap ? `Forgiveness: ${calLabel(pslfSnap.calendar_month, pslfSnap.year)}` : 'No forgiveness'}
                       icon={<TrendingUp size={14} />}
                       accent={isTimeTravel && (annualForYear?.pslfCount ?? 0) >= 120 ? 'green' : 'purple'}
                     />
@@ -449,7 +462,6 @@ export default function Dashboard() {
                       accent={(isTimeTravel ? (annualForYear?.totalDebt ?? 1) : firstSnap.total_debt) > 0 ? 'red' : 'green'}
                     />
                   )}
-                  {/* Investments: stock value (end-of-year or 30yr) */}
                   <StatCard
                     label={isTimeTravel ? `Investments (${activeYear})` : 'Investments (30yr)'}
                     value={isTimeTravel ? fmtShort(annualForYear?.totalInvestments) : fmtShort(lastSnap?.total_investments)}
@@ -460,26 +472,14 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {/* ── Main layout ── */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
-
-                {/* LEFT: Charts + Agent */}
-                <div className="lg:col-span-2 space-y-5">
-
-                  {/* Chart card */}
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-5 items-start">
+                <div className="lg:col-span-3 space-y-5">
+                  {/* Chart section */}
                   <div className="card">
                     <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                       <div className="flex gap-1 flex-wrap">
                         {chartViews.map(v => (
-                          <button
-                            key={v.key}
-                            onClick={() => setChartView(v.key)}
-                            className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                              validView === v.key
-                                ? 'bg-gray-700 text-white'
-                                : 'text-gray-500 hover:text-gray-300'
-                            }`}
-                          >
+                          <button key={v.key} onClick={() => setChartView(v.key)} className={`px-3 py-1 text-xs rounded-md transition-colors ${validView === v.key ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}>
                             {v.label}
                           </button>
                         ))}
@@ -490,9 +490,7 @@ export default function Dashboard() {
                     </div>
 
                     {!simResult ? (
-                      <div className="h-72 flex items-center justify-center text-gray-600 text-sm">
-                        {simFetching ? 'Running simulation…' : 'Add income or debts to simulate'}
-                      </div>
+                      <div className="h-72 flex items-center justify-center text-gray-600 text-sm">Add data to simulate</div>
                     ) : (
                       <>
                         {validView === 'overview' && (
@@ -509,139 +507,135 @@ export default function Dashboard() {
                             onClickYear={handleChartClick}
                           />
                         )}
-                        {validView === 'debt' && (
-                          <DebtTrajectoryChart
-                            snapshots={snapshots}
-                            debts={activePlan.debt_accounts}
-                            height={300}
-                          />
-                        )}
-                        {validView === 'cashflow' && (
-                          <div>
-                            <p className="text-xs text-gray-500 mb-3">Monthly budget composition at key years</p>
-                            <CashFlowEvolution snapshots={snapshots} />
-                          </div>
-                        )}
-                        {validView === 'savings' && (
-                          <div>
-                            <p className="text-xs text-gray-500 mb-3">Balance per account over time</p>
-                            <SavingsBreakdownChart
-                              snapshots={snapshots}
-                              accounts={activePlan.investment_accounts ?? []}
-                              height={300}
-                            />
-                          </div>
-                        )}
-                        {validView === 'table' && (
-                          <AnnualSummaryTable snapshots={snapshots} />
-                        )}
-                        {validView === 'repayment' && (
-                          repaymentData ? (
-                            <RepaymentComparisonPanel
-                              plans={repaymentData.plans}
-                              startYear={activePlan.simulation_config.start_year}
-                              startMonth={activePlan.simulation_config.start_month}
-                            />
-                          ) : (
-                            <div className="h-48 flex items-center justify-center text-gray-600 text-sm">
-                              Loading repayment comparison…
-                            </div>
-                          )
-                        )}
+                        {validView === 'debt' && <DebtTrajectoryChart snapshots={snapshots} debts={activePlan.debt_accounts} height={300} />}
+                        {validView === 'cashflow' && <CashFlowEvolution snapshots={snapshots} />}
+                        {validView === 'savings' && <SavingsBreakdownChart snapshots={snapshots} accounts={activePlan.investment_accounts ?? []} height={300} />}
+                        {validView === 'table' && <AnnualSummaryTable snapshots={snapshots} />}
+                        {validView === 'repayment' && (repaymentData ? <RepaymentComparisonPanel plans={repaymentData.plans} startYear={activePlan.simulation_config.start_year} startMonth={activePlan.simulation_config.start_month} /> : <div className="h-48 flex items-center justify-center text-gray-600 text-sm">Loading…</div>)}
                         {validView === 'comparison' && (
                           <div className="space-y-3">
-                            <div className="flex items-center gap-3">
-                              <span className="text-xs text-gray-500">Compare with:</span>
-                              <select
-                                value={comparePlanId ?? ''}
-                                onChange={e => setComparePlanId(e.target.value || null)}
-                                className="input text-xs flex-1"
-                              >
-                                <option value="">— select a plan —</option>
-                                {plans.filter(p => p.id !== activePlan_id).map(p => (
-                                  <option key={p.id} value={p.id}>{p.name}</option>
-                                ))}
-                              </select>
-                            </div>
-                            {comparePlanId && comparisonData ? (
-                              <ComparisonPanel
-                                deltas={comparisonData.full_deltas}
-                                planAName={activePlan.name}
-                                planBName={comparePlan?.name ?? 'Plan B'}
-                              />
-                            ) : (
-                              <div className="h-48 flex items-center justify-center text-gray-600 text-sm">
-                                {comparePlanId ? 'Loading comparison…' : 'Select a second plan above to compare'}
-                              </div>
-                            )}
+                            <select value={comparePlanId ?? ''} onChange={e => setComparePlanId(e.target.value || null)} className="input text-xs w-full">
+                              <option value="">— select a plan —</option>
+                              {plans.filter(p => p.id !== activePlan_id).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                            {comparePlanId && comparisonData ? <ComparisonPanel deltas={comparisonData.full_deltas} planAName={activePlan.name} planBName={comparePlan?.name ?? 'Plan B'} /> : <div className="h-48 flex items-center justify-center text-gray-600 text-sm">Select a plan</div>}
                           </div>
                         )}
                       </>
                     )}
                   </div>
 
-                  {/* Sensitivity sliders */}
-                  {simResult && (
-                    <SensitivityPanel
-                      planId={activePlan.id}
-                      simParams={{ filing_status: 'mfj', household_size: 2 }}
-                      onResult={snaps => {
-                        setWhatIfSnapshots(snaps)
-                        if (snaps && validView !== 'overview') setChartView('overview')
-                      }}
-                    />
-                  )}
+                  {/* Cash Flow Constrainer & Optimization Panel */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="card border-blue-900/20 bg-blue-900/5">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck size={18} className="text-blue-400" />
+                          <h3 className="font-semibold text-white text-sm">Cash Flow Constrainer</h3>
+                        </div>
+                        <button onClick={() => setShowConfig(!showConfig)} className="text-gray-500 hover:text-white">
+                          <Settings2 size={16} />
+                        </button>
+                      </div>
+                      
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-400">Target Monthly Cash Flow</span>
+                          <span className="text-xs font-mono text-white bg-gray-900 px-2 py-1 rounded">{fmt(activePlan.simulation_config.target_cash_flow)}</span>
+                        </div>
 
-                  {/* Natural language builder */}
+                        <div className="grid grid-cols-3 gap-2">
+                          {[
+                            { label: 'Giving', key: 'constrain_giving' as const, icon: <Heart size={12} /> },
+                            { label: 'Invest', key: 'constrain_investments' as const, icon: <Landmark size={12} /> },
+                            { label: 'Savings', key: 'constrain_savings' as const, icon: <Wallet size={12} /> },
+                          ].map(item => (
+                            <button
+                              key={item.key}
+                              onClick={() => updateConfigMutation.mutate({ [item.key]: !activePlan.simulation_config[item.key] })}
+                              className={`flex flex-col items-center gap-2 p-3 rounded-lg border transition-all ${activePlan.simulation_config[item.key] ? 'bg-blue-600/20 border-blue-500 text-blue-400' : 'bg-gray-900/50 border-gray-800 text-gray-500 grayscale'}`}
+                            >
+                              {item.icon}
+                              <span className="text-[10px] font-bold uppercase tracking-wider">{item.label}</span>
+                            </button>
+                          ))}
+                        </div>
+
+                        {showConfig && (
+                          <div className="pt-2">
+                            <input type="range" min="0" max="5000" step="100" value={activePlan.simulation_config.target_cash_flow} onChange={e => updateConfigMutation.mutate({ target_cash_flow: parseInt(e.target.value) })} className="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                          </div>
+                        )}
+                        <p className="text-[11px] text-gray-500 leading-relaxed bg-black/20 p-2 rounded border border-gray-800/50">
+                          {activePlan.simulation_config.constrain_investments || activePlan.simulation_config.constrain_giving || activePlan.simulation_config.constrain_savings 
+                            ? "Outflows will be dynamically scaled down to maintain your target cash flow floor."
+                            : "No constraints applied."
+                          }
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="card border-purple-900/20 bg-purple-900/5">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Zap size={18} className="text-purple-400" />
+                        <h3 className="font-semibold text-white text-sm">Goal Optimizer</h3>
+                      </div>
+                      <div className="space-y-3">
+                        <p className="text-xs text-gray-500 leading-relaxed">Let Solomon solve for your goals.</p>
+                        <div className="space-y-2">
+                          {[
+                            { label: "Optimize for $2M by month 240", prompt: "Use the optimize_plan tool to reach $2M net worth by month 240 by adjusting my monthly contribution to my primary retirement account." },
+                            { label: "Find required savings for Year 10 debt-free", prompt: "Use the optimize_plan tool to find the required extra debt payment to be debt-free by month 120." },
+                            { label: "Maximize giving with $2k/mo floor", prompt: "Set my target cash flow to $2000 and enable 'constrain_giving' to see how much I can give while staying above my floor." },
+                          ].map(goal => (
+                            <button 
+                              key={goal.label} 
+                              onClick={async () => {
+                                const token = localStorage.getItem('access_token')
+                                if (!activePlan_id) return
+                                alert("Solomon is calculating scenario optimization...")
+                                await fetch('/ai/chat', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                                  body: JSON.stringify({ plan_id: activePlan_id, message: goal.prompt }),
+                                })
+                                qc.invalidateQueries({ queryKey: ['plans'] })
+                                qc.invalidateQueries({ queryKey: ['simulate', activePlan_id] })
+                              }} 
+                              className="w-full text-left px-3 py-2 text-[11px] bg-gray-900/50 border border-gray-800 rounded hover:border-purple-500/50 text-gray-400 hover:text-purple-300 flex items-center justify-between group"
+                            >
+                              {goal.label}
+                              <ChevronRight size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   <SimpleAgent planId={activePlan.id} />
+                  {simResult && <SensitivityPanel planId={activePlan.id} simParams={{ filing_status: 'mfj', household_size: 2 }} onResult={snaps => { setWhatIfSnapshots(snaps); if (snaps && validView !== 'overview') setChartView('overview') }} />}
                 </div>
 
-                {/* RIGHT: sidebar panels + Plan editor */}
                 <div className="lg:col-span-1 space-y-5">
-
-                  {/* Debt & PSLF panel — only when there are debts */}
-                  {simResult && hasDebts && (
-                    <DebtFreedomPanel snapshots={snapshots} plan={activePlan} />
-                  )}
-
-                  {/* Savings goals */}
-                  {simResult?.goal_progress?.length ? (
-                    <GoalsPanel
-                      goals={simResult.goal_progress}
-                      startYear={activePlan.simulation_config.start_year}
-                      startMonth={activePlan.simulation_config.start_month}
-                    />
-                  ) : null}
-
-                  {/* Plan elements editor */}
+                  {simResult && hasDebts && <DebtFreedomPanel snapshots={snapshots} plan={activePlan} />}
+                  {simResult?.goal_progress?.length ? <GoalsPanel goals={simResult.goal_progress} startYear={activePlan.simulation_config.start_year} startMonth={activePlan.simulation_config.start_month} /> : null}
                   <div className="card flex flex-col">
                     <div className="flex items-center justify-between mb-2">
                       <h2 className="font-semibold text-white text-sm">Plan Elements</h2>
-                      <span className="text-xs px-2 py-1 bg-gray-800 text-gray-400 rounded">Edit sandbox</span>
                     </div>
-
-                    <div className="flex gap-0.5 border-b border-gray-800 overflow-x-auto py-1 mb-3 hide-scrollbar">
+                    <div className="flex gap-0.5 border-b border-gray-800 overflow-x-auto py-1 mb-3 scrollbar-hide">
                       {tabs.map(t => (
-                        <button
-                          key={t.key}
-                          onClick={() => setTab(t.key)}
-                          className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md transition-colors whitespace-nowrap ${
-                            tab === t.key
-                              ? 'bg-gray-800 text-white'
-                              : 'text-gray-500 hover:text-gray-300'
-                          }`}
-                        >
+                        <button key={t.key} onClick={() => setTab(t.key)} className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md transition-colors whitespace-nowrap ${tab === t.key ? 'bg-gray-800 text-white' : 'text-gray-500 hover:text-gray-300'}`}>
                           {t.icon}{t.label}
                         </button>
                       ))}
                     </div>
-
                     <div className="overflow-y-auto max-h-[520px] pr-0.5">
                       <TabContent tab={tab} plan={activePlan} />
                     </div>
                   </div>
                 </div>
-
               </div>
             </>
           )}

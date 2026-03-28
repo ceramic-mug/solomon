@@ -33,6 +33,10 @@ export interface SimulationConfig {
   stock_std_dev: number
   bond_mean_return: number
   bond_std_dev: number
+  target_cash_flow: number
+  constrain_giving: boolean
+  constrain_savings: boolean
+  constrain_investments: boolean
 }
 
 export type IncomeType = 'salary' | 'bonus' | 'side_income' | 'investment' | 'rental' | 'other'

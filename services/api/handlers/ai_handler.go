@@ -347,7 +347,12 @@ func (h *AIHandler) executeTool(
 		if err != nil {
 			return nil, err
 		}
-		return fork, nil
+		return map[string]interface{}{
+			"id":          fork.ID,
+			"name":        fork.Name,
+			"description": fork.Description,
+			"message":     "Fork created successfully. You can now use get_plan or get_simulation on this new plan ID if you need more details.",
+		}, nil
 
 	case "add_life_event":
 		id := planID
@@ -667,6 +672,22 @@ func solomonToolDefs() *genai.Tool {
 						"description": str("Short description of this scenario"),
 					},
 					Required: []string{"fork_month", "name"},
+				},
+			},
+			{
+				Name:        "optimize_plan",
+				Description: "Iteratively solve for a target goal (e.g. net worth at retirement) by adjusting a specific variable (e.g. monthly contribution). Creates a new fork with the optimized value.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"plan_id":      str("UUID of the plan"),
+						"goal_type":     str("Type of goal: 'net_worth_at_month'"),
+						"target_value":  num("The dollar amount target (e.g. 2000000 for $2M)"),
+						"target_month":  num("The month index when the target should be reached"),
+						"adjust_field":  str("Field to adjust: 'monthly_contrib'"),
+						"target_id":     str("UUID of the account/income to adjust"),
+					},
+					Required: []string{"goal_type", "target_value", "target_month", "adjust_field", "target_id"},
 				},
 			},
 			{

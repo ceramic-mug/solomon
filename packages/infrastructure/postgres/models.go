@@ -74,6 +74,12 @@ type SimulationConfigModel struct {
 	StockStdDev      float64   `gorm:"not null;default:0.15"`
 	BondMeanReturn   float64   `gorm:"not null;default:0.04"`
 	BondStdDev       float64   `gorm:"not null;default:0.06"`
+
+	// Cash flow constraint
+	TargetCashFlow       float64 `gorm:"not null;default:0"`
+	ConstrainGiving      bool    `gorm:"not null;default:false"`
+	ConstrainSavings     bool    `gorm:"not null;default:false"`
+	ConstrainInvestments bool    `gorm:"not null;default:false"`
 }
 
 func (SimulationConfigModel) TableName() string { return "simulation_configs" }

@@ -69,6 +69,10 @@ func simConfigToDomain(m SimulationConfigModel) domain.SimulationConfig {
 		StockStdDev:      m.StockStdDev,
 		BondMeanReturn:   m.BondMeanReturn,
 		BondStdDev:       m.BondStdDev,
+		TargetCashFlow:   m.TargetCashFlow,
+		ConstrainGiving:  m.ConstrainGiving,
+		ConstrainSavings: m.ConstrainSavings,
+		ConstrainInvestments: m.ConstrainInvestments,
 	}
 }
 
@@ -85,6 +89,10 @@ func simConfigToModel(c domain.SimulationConfig) SimulationConfigModel {
 		StockStdDev:      c.StockStdDev,
 		BondMeanReturn:   c.BondMeanReturn,
 		BondStdDev:       c.BondStdDev,
+		TargetCashFlow:   c.TargetCashFlow,
+		ConstrainGiving:  c.ConstrainGiving,
+		ConstrainSavings: c.ConstrainSavings,
+		ConstrainInvestments: c.ConstrainInvestments,
 	}
 }
 

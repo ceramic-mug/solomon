@@ -107,7 +107,8 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 
 		// ---- Giving ----
 		var totalGiving float64
-		for _, g := range plan.GivingTargets {
+		givingItems := make([]float64, len(plan.GivingTargets))
+		for i, g := range plan.GivingTargets {
 			if m < g.StartMonth {
 				continue
 			}
@@ -115,14 +116,15 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 				continue
 			}
 			if g.FixedAmount != nil {
-				totalGiving += *g.FixedAmount
+				givingItems[i] = *g.FixedAmount
 			} else {
 				base := grossIncome
 				if g.Basis == domain.GivingBasisNet {
 					base = netIncome
 				}
-				totalGiving += base * g.Percentage
+				givingItems[i] = base * g.Percentage
 			}
+			totalGiving += givingItems[i]
 		}
 
 		// ---- Expenses ----
@@ -133,21 +135,16 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 
 		// ---- Debt payments ----
 		var totalDebtPayments float64
+		// ... (debt logic unchanged, keeping it for context)
 		var totalInterestPaid float64
 		var totalDebt float64
 		totalPSLFQualifying := 0
 
 		for i, d := range debts {
 			if m < d.StartMonth || d.Balance <= 0 {
-				if d.Balance <= 0 {
-					// still sum zero
-				}
 				continue
 			}
 
-			// Compute monthly payment based on the repayment plan.
-			// IDR/PAYE/SAVE/IBR_New use income-driven formulas; standard uses min_payment.
-			// Extra payment is always additive.
 			var payment float64
 			poverty := PovertyGuideline2026(opts.HouseholdSize)
 			switch d.RepaymentPlan {
@@ -164,11 +161,9 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 
 			step := ProcessDebtMonth(d.Balance, d.InterestRate, payment)
 			debts[i].Balance = step.NewBalance
-
 			totalDebtPayments += step.TotalPaid
 			totalInterestPaid += step.InterestCharge
 
-			// PSLF tracking — counts qualifying payments for IDR/PAYE/SAVE/IBR_New plans
 			if d.PSLFEligible &&
 				(d.RepaymentPlan == domain.RepaymentPlanIDR ||
 					d.RepaymentPlan == domain.RepaymentPlanPAYE ||
@@ -176,7 +171,6 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 					d.RepaymentPlan == domain.RepaymentPlanIBRNew) {
 				pslfStates[i] = ProcessPSLFMonth(pslfStates[i], step.TotalPaid, debts[i].Balance, true, m)
 				totalPSLFQualifying = pslfStates[i].QualifyingPayments
-				// If forgiveness occurred, zero out the balance
 				if pslfStates[i].ForgivenAt == m {
 					debts[i].Balance = 0
 				}
@@ -211,23 +205,160 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 			}
 		}
 
-		// ---- Investment contributions & compounding ----
+		// ---- Investment & Savings contributions (pre-calculation) ----
+		type invContrib struct {
+			index   int
+			amount  float64
+			isSavings bool
+		}
+		desiredInvestContribs := make([]invContrib, 0, len(investments))
+		var totalDesiredInvest float64
+
+		for i, inv := range investments {
+			if m < inv.StartMonth {
+				continue
+			}
+			contrib := inv.MonthlyContrib
+			// Enforce IRS annual limits (employee contributions only)
+			limit, hasLimit := domain.IRSLimits2026[inv.Type]
+			if hasLimit {
+				annualSoFar := yearlyContribs[inv.Type]
+				headroom := limit - annualSoFar
+				if headroom <= 0 {
+					contrib = 0
+				} else if inv.MonthlyContrib > headroom {
+					contrib = headroom
+				}
+			}
+
+			isSavings := inv.Type == domain.AccountTypeSavings || inv.Type == domain.AccountTypeMoneyMarket || inv.Type == domain.AccountTypeCash
+			desiredInvestContribs = append(desiredInvestContribs, invContrib{index: i, amount: contrib, isSavings: isSavings})
+			totalDesiredInvest += contrib
+		}
+
+		// ---- Cash Flow Constrainer Logic ----
+		// Calculate cash flow BEFORE giving and investment
+		baseCashFlow := netIncome - totalExpenses - totalDebtPayments
+		targetCF := cfg.TargetCashFlow
+		
+		// If baseCashFlow is already below target, we definitely need to cut.
+		// If not, we check if applying giving and investment pushes us below target.
+		
+		availableForOutflows := baseCashFlow - targetCF
+		if availableForOutflows < 0 {
+			availableForOutflows = 0
+		}
+
+		// Priority 1: Investment (cut first if cfg.ConstrainInvestments)
+		// Priority 2: Giving (cut second if cfg.ConstrainGiving)
+		// Priority 3: Savings (cut third if cfg.ConstrainSavings)
+		
+		actualInvestContribs := make([]float64, len(investments))
+		actualGiving := make([]float64, len(plan.GivingTargets))
+		
+		// Temporary variables for iterative cutting
+		remainingAvailable := availableForOutflows
+
+		// 1. Handle non-savings investments
+		var totalDesiredNonSavings float64
+		for _, dc := range desiredInvestContribs {
+			if !dc.isSavings {
+				totalDesiredNonSavings += dc.amount
+			}
+		}
+
+		if cfg.ConstrainInvestments && totalDesiredNonSavings > remainingAvailable {
+			ratio := 0.0
+			if totalDesiredNonSavings > 0 {
+				ratio = remainingAvailable / totalDesiredNonSavings
+			}
+			for _, dc := range desiredInvestContribs {
+				if !dc.isSavings {
+					actualInvestContribs[dc.index] = dc.amount * ratio
+				}
+			}
+			remainingAvailable = 0
+		} else {
+			for _, dc := range desiredInvestContribs {
+				if !dc.isSavings {
+					actualInvestContribs[dc.index] = dc.amount
+					remainingAvailable -= dc.amount
+				}
+			}
+		}
+		if remainingAvailable < 0 { remainingAvailable = 0 }
+
+		// 2. Handle Giving
+		if cfg.ConstrainGiving && totalGiving > remainingAvailable {
+			ratio := 0.0
+			if totalGiving > 0 {
+				ratio = remainingAvailable / totalGiving
+			}
+			for i := range actualGiving {
+				actualGiving[i] = givingItems[i] * ratio
+			}
+			remainingAvailable = 0
+		} else {
+			for i := range actualGiving {
+				actualGiving[i] = givingItems[i]
+				remainingAvailable -= givingItems[i]
+			}
+		}
+		if remainingAvailable < 0 { remainingAvailable = 0 }
+
+		// 3. Handle Savings
+		var totalDesiredSavings float64
+		for _, dc := range desiredInvestContribs {
+			if dc.isSavings {
+				totalDesiredSavings += dc.amount
+			}
+		}
+
+		if cfg.ConstrainSavings && totalDesiredSavings > remainingAvailable {
+			ratio := 0.0
+			if totalDesiredSavings > 0 {
+				ratio = remainingAvailable / totalDesiredSavings
+			}
+			for _, dc := range desiredInvestContribs {
+				if dc.isSavings {
+					actualInvestContribs[dc.index] = dc.amount * ratio
+				}
+			}
+			remainingAvailable = 0
+		} else {
+			for _, dc := range desiredInvestContribs {
+				if dc.isSavings {
+					actualInvestContribs[dc.index] = dc.amount
+					remainingAvailable -= dc.amount
+				}
+			}
+		}
+
+		// Final totals
 		var totalInvestContrib float64
+		for _, amt := range actualInvestContribs {
+			totalInvestContrib += amt
+		}
+		totalGiving = 0
+		for _, amt := range actualGiving {
+			totalGiving += amt
+		}
+
+		// ---- Apply investment compounding and actual contributions ----
 		var totalInvestments float64
 		totalStockPct := 0.0
 		totalBondPct := 0.0
 		totalCashPct := 0.0
 		totalBalance := 0.0
 
-		// First pass: compute employer matches and apply compounding
 		for i, inv := range investments {
 			if m < inv.StartMonth {
 				continue
 			}
 
-			contrib := inv.MonthlyContrib
+			contrib := actualInvestContribs[i]
 
-			// Employer match for 401k-type accounts
+			// Employer match (unconstrained by cash flow cap as it's from employer)
 			if (inv.Type == domain.AccountTypeTrad401k || inv.Type == domain.AccountTypeRoth401k) &&
 				inv.EmployerMatch > 0 && inv.EmployerMatchCap > 0 {
 				monthlyGross := grossIncome
@@ -239,27 +370,14 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 				contrib += match
 			}
 
-			// Enforce IRS annual limits (employee contributions only)
-			limit, hasLimit := domain.IRSLimits2026[inv.Type]
-			if hasLimit {
-				annualSoFar := yearlyContribs[inv.Type]
-				headroom := limit - annualSoFar
-				if headroom <= 0 {
-					contrib = 0 // at limit
-				} else if inv.MonthlyContrib > headroom {
-					// clip to exactly the remaining headroom
-					excess := inv.MonthlyContrib - headroom
-					contrib -= excess
-					if contrib < 0 {
-						contrib = 0
-					}
-				}
-				yearlyContribs[inv.Type] += inv.MonthlyContrib // track employee-only portion
+			// Update annual contribution tracker (only for the part user actually contributed)
+			if _, hasLimit := domain.IRSLimits2026[inv.Type]; hasLimit {
+				yearlyContribs[inv.Type] += actualInvestContribs[i]
 			}
 
 			stockRet := MonthlyReturn(cfg.StockMeanReturn)
 			bondRet := MonthlyReturn(cfg.BondMeanReturn)
-			cashRet := MonthlyReturn(0.05) // 5% cash/HYSA return
+			cashRet := MonthlyReturn(0.05)
 
 			investments[i].Balance = CompoundMonth(
 				inv.Balance,
@@ -270,10 +388,7 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 				contrib,
 			)
 
-			totalInvestContrib += contrib
 			totalInvestments += investments[i].Balance
-
-			// Weighted allocation for MC input
 			totalBalance += investments[i].Balance
 			totalStockPct += inv.AssetAllocation.StockPct * investments[i].Balance
 			totalBondPct += inv.AssetAllocation.BondPct * investments[i].Balance

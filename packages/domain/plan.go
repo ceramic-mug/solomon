@@ -47,6 +47,12 @@ type SimulationConfig struct {
 	StockStdDev     float64 `json:"stock_std_dev"`     // e.g. 0.15
 	BondMeanReturn  float64 `json:"bond_mean_return"`  // e.g. 0.04
 	BondStdDev      float64 `json:"bond_std_dev"`      // e.g. 0.06
+
+	// Cash flow constraint (optimizer)
+	TargetCashFlow      float64 `json:"target_cash_flow"`     // e.g. 1000 — minimum monthly cash flow to maintain
+	ConstrainGiving     bool    `json:"constrain_giving"`     // if true, giving targets are scaled down to meet target_cash_flow
+	ConstrainSavings    bool    `json:"constrain_savings"`    // if true, savings/cash accounts are scaled down
+	ConstrainInvestments bool   `json:"constrain_investments"` // if true, retirement/brokerage accounts are scaled down
 }
 
 // DefaultSimulationConfig returns sensible defaults for a new plan.
