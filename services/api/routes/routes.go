@@ -8,7 +8,7 @@ import (
 
 // Register wires all routes to the Echo instance.
 func Register(e *echo.Echo, auth *handlers.AuthHandler, plans *handlers.PlanHandler,
-	comp *handlers.ComponentHandler, sim *handlers.SimulateHandler) {
+	comp *handlers.ComponentHandler, sim *handlers.SimulateHandler, ai *handlers.AIHandler) {
 
 	// ---- Public ----
 	e.POST("/auth/register", auth.Register)
@@ -58,4 +58,7 @@ func Register(e *echo.Echo, auth *handlers.AuthHandler, plans *handlers.PlanHand
 	// Giving
 	api.POST("/plans/:id/giving", comp.CreateGiving)
 	api.DELETE("/plans/:id/giving/:sid", comp.DeleteGiving)
+
+	// AI
+	api.POST("/ai/chat", ai.Chat)
 }

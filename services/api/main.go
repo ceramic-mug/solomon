@@ -18,6 +18,7 @@ func main() {
 	dsn := env("DATABASE_URL", "postgres://solomon:solomon@localhost:5432/solomon?sslmode=disable")
 	jwtSecret := env("JWT_SECRET", "dev-secret-change-me-in-production")
 	port := env("PORT", "8080")
+	geminiKey := env("GEMINI_API_KEY", "")
 
 	mw.JWTSecret = []byte(jwtSecret)
 
@@ -38,6 +39,7 @@ func main() {
 	planHandler := handlers.NewPlanHandler(repo)
 	compHandler := handlers.NewComponentHandler(repo)
 	simHandler := handlers.NewSimulateHandler(repo)
+	aiHandler := handlers.NewAIHandler(repo, geminiKey)
 
 	// ---- Echo ----
 	e := echo.New()
@@ -54,7 +56,7 @@ func main() {
 	e.Use(echomw.RequestID())
 
 	// Routes
-	routes.Register(e, authHandler, planHandler, compHandler, simHandler)
+	routes.Register(e, authHandler, planHandler, compHandler, simHandler, aiHandler)
 
 	// Health check (no auth required)
 	e.GET("/health", func(c echo.Context) error {

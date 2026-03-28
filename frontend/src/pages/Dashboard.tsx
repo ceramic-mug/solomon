@@ -5,7 +5,7 @@ import { listPlans, createPlan, simulate } from '../api/client'
 import { usePlanStore } from '../store/plan'
 import NetWorthChart from '../components/charts/NetWorthChart'
 import type { Plan, SimulationResult } from '../api/types'
-import { Plus, GitBranch, TrendingUp, DollarSign, CreditCard, Landmark } from 'lucide-react'
+import { Plus, GitBranch, TrendingUp, DollarSign, CreditCard, Landmark, MessageSquare } from 'lucide-react'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
@@ -175,9 +175,14 @@ export default function Dashboard() {
               <div className="card">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="font-semibold text-white">Net Worth Projection</h2>
-                  <Link to={`/plans/${activePlan.id}`} className="btn-ghost text-sm">
-                    Edit plan →
-                  </Link>
+                  <div className="flex items-center gap-2">
+                    <Link to={`/plans/${activePlan.id}/chat`} className="btn-ghost text-sm flex items-center gap-1.5">
+                      <MessageSquare size={13} />Ask AI
+                    </Link>
+                    <Link to={`/plans/${activePlan.id}`} className="btn-ghost text-sm">
+                      Edit plan →
+                    </Link>
+                  </div>
                 </div>
                 {simResult ? (
                   <NetWorthChart snapshots={simResult.monthly_snapshots} height={300} />

@@ -1,9 +1,11 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
-import { BarChart2, GitBranch, Settings, LogOut, Coins } from 'lucide-react'
+import { usePlanStore } from '../store/plan'
+import { BarChart2, GitBranch, MessageSquare, Settings, LogOut, Coins } from 'lucide-react'
 
 export default function Layout() {
   const { user, clearAuth } = useAuthStore()
+  const activePlanId = usePlanStore(s => s.activePlanId)
   const navigate = useNavigate()
 
   const logout = () => {
@@ -26,7 +28,12 @@ export default function Layout() {
         {/* Nav links */}
         <div className="flex-1 px-2 py-4 space-y-1">
           <NavItem to="/" icon={<BarChart2 size={18} />} label="Dashboard" />
-          <NavItem to="/scenarios" icon={<GitBranch size={18} />} label="Scenarios" />
+          {activePlanId && (
+            <>
+              <NavItem to={`/plans/${activePlanId}/scenarios`} icon={<GitBranch size={18} />} label="Scenarios" />
+              <NavItem to={`/plans/${activePlanId}/chat`} icon={<MessageSquare size={18} />} label="AI Advisor" />
+            </>
+          )}
           <NavItem to="/settings" icon={<Settings size={18} />} label="Settings" />
         </div>
 
