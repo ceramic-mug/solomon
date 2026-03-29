@@ -37,6 +37,10 @@ export interface SimulationConfig {
   constrain_giving: boolean
   constrain_savings: boolean
   constrain_investments: boolean
+  net_worth_ceiling_enabled: boolean
+  net_worth_ceiling: number
+  filing_status: string       // "single" | "mfj" | "mfs" | "hoh"
+  household_size: number
 }
 
 export type IncomeType = 'salary' | 'bonus' | 'side_income' | 'investment' | 'rental' | 'other'
@@ -110,12 +114,26 @@ export interface InvestmentAccount {
   monthly_contrib: number
   contrib_basis: ContribBasis
   contrib_percent: number
+  overflow_pct: number   // fraction of monthly surplus swept here, additive to baseline
   employer_match: number
   employer_match_cap: number
   asset_allocation: AssetAllocation
   start_month: number
   goal_target?: number
   goal_label?: string
+}
+
+export type ChildSchoolPref = 'public' | 'private'
+
+export interface Child {
+  id: string
+  plan_id: string
+  name: string
+  birth_month: number           // 0-indexed from plan start; negative = already born
+  school_preference: ChildSchoolPref
+  college_account_id?: string   // linked 529 investment account id
+  include_activities: boolean
+  include_first_car: boolean
 }
 
 export type GivingBasis = 'gross' | 'net' | 'remainder'
@@ -126,6 +144,7 @@ export interface GivingTarget {
   name: string
   basis: GivingBasis
   percentage: number
+  overflow_pct: number   // fraction of monthly surplus swept here, additive to baseline
   fixed_amount?: number
   start_month: number
   end_month?: number
@@ -169,6 +188,7 @@ export interface Plan {
   investment_accounts: InvestmentAccount[]
   life_events: LifeEvent[]
   giving_targets: GivingTarget[]
+  children: Child[]
 }
 
 // ---- Simulation Results ----
@@ -190,6 +210,8 @@ export interface MonthSnapshot {
   total_investments: number
   net_worth: number
   home_equity?: number
+  accumulated_giving: number
+  ceiling_diverted_to_giving?: number
   pslf_qualifying_payments?: number
   debt_balances?: Record<string, number>
   investment_balances?: Record<string, number>

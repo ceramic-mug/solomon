@@ -30,6 +30,7 @@ type Plan struct {
 	InvestmentAccounts []InvestmentAccount `json:"investment_accounts"`
 	LifeEvents         []LifeEvent         `json:"life_events"`
 	GivingTargets      []GivingTarget      `json:"giving_targets"`
+	Children           []Child             `json:"children"`
 }
 
 // SimulationConfig controls how the simulation engine runs for a given plan.
@@ -53,6 +54,14 @@ type SimulationConfig struct {
 	ConstrainGiving     bool    `json:"constrain_giving"`     // if true, giving targets are scaled down to meet target_cash_flow
 	ConstrainSavings    bool    `json:"constrain_savings"`    // if true, savings/cash accounts are scaled down
 	ConstrainInvestments bool   `json:"constrain_investments"` // if true, retirement/brokerage accounts are scaled down
+
+	// Net worth ceiling constrainer
+	NetWorthCeilingEnabled bool    `json:"net_worth_ceiling_enabled"` // if true, net worth is capped at NetWorthCeiling
+	NetWorthCeiling        float64 `json:"net_worth_ceiling"`         // e.g. 10_000_000 — hard cap on net worth; excess is diverted to giving
+
+	// Tax / IDR calculation inputs — persisted so simulations are consistent
+	FilingStatus  string `json:"filing_status"`  // "single" | "mfj" | "mfs" | "hoh"
+	HouseholdSize int    `json:"household_size"` // for IDR poverty line lookup (default 1)
 }
 
 // DefaultSimulationConfig returns sensible defaults for a new plan.
@@ -69,5 +78,7 @@ func DefaultSimulationConfig(planID uuid.UUID) SimulationConfig {
 		StockStdDev:      0.15,
 		BondMeanReturn:   0.04,
 		BondStdDev:       0.06,
+		FilingStatus:     "mfj",
+		HouseholdSize:    2,
 	}
 }

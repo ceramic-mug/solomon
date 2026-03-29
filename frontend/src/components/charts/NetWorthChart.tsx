@@ -64,15 +64,15 @@ export default function NetWorthChart({ snapshots, monteCarlo, showMonteCarlo, c
               <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.02} />
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-          <XAxis dataKey="year" stroke="#4b5563" tick={{ fill: '#6b7280', fontSize: 11 }} />
-          <YAxis stroke="#4b5563" tick={{ fill: '#6b7280', fontSize: 11 }} tickFormatter={formatDollar} width={60} />
+          <CartesianGrid strokeDasharray="3 3" stroke="#2a1f1a" />
+          <XAxis dataKey="year" stroke="#5c443a" tick={{ fill: '#7a5c4e', fontSize: 11 }} />
+          <YAxis stroke="#5c443a" tick={{ fill: '#7a5c4e', fontSize: 11 }} tickFormatter={formatDollar} width={60} />
           <Tooltip
-            contentStyle={{ backgroundColor: '#111827', border: '1px solid #1f2937', borderRadius: '8px' }}
-            labelStyle={{ color: '#9ca3af' }}
+            contentStyle={{ backgroundColor: '#181210', border: '1px solid #2a1f1a', borderRadius: '8px' }}
+            labelStyle={{ color: '#9e7b68' }}
             formatter={(v: number) => [formatTooltipDollar(v)]}
           />
-          <ReferenceLine y={0} stroke="#374151" />
+          <ReferenceLine y={0} stroke="#3d2e27" />
           {/* P10-P90 band */}
           <Area type="monotone" dataKey="p90" stroke="none" fill="url(#p90p10)" fillOpacity={1} stackId="band" />
           <Area type="monotone" dataKey="p10" stroke="none" fill="#0a0e1a" fillOpacity={1} stackId="band" />
@@ -92,18 +92,18 @@ export default function NetWorthChart({ snapshots, monteCarlo, showMonteCarlo, c
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 8, right: 24, bottom: 0, left: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-        <XAxis dataKey="year" stroke="#4b5563" tick={{ fill: '#6b7280', fontSize: 11 }} />
-        <YAxis stroke="#4b5563" tick={{ fill: '#6b7280', fontSize: 11 }} tickFormatter={formatDollar} width={60} />
+        <CartesianGrid strokeDasharray="3 3" stroke="#2a1f1a" />
+        <XAxis dataKey="year" stroke="#5c443a" tick={{ fill: '#7a5c4e', fontSize: 11 }} />
+        <YAxis stroke="#5c443a" tick={{ fill: '#7a5c4e', fontSize: 11 }} tickFormatter={formatDollar} width={60} />
         <Tooltip
-          contentStyle={{ backgroundColor: '#111827', border: '1px solid #1f2937', borderRadius: '8px' }}
-          labelStyle={{ color: '#9ca3af' }}
+          contentStyle={{ backgroundColor: '#181210', border: '1px solid #2a1f1a', borderRadius: '8px' }}
+          labelStyle={{ color: '#9e7b68' }}
           formatter={(v: number, name: string) => [
             formatTooltipDollar(v),
             name === 'netWorth' ? 'Net Worth' : 'Comparison',
           ]}
         />
-        <ReferenceLine y={0} stroke="#374151" />
+        <ReferenceLine y={0} stroke="#3d2e27" />
         <Line type="monotone" dataKey="netWorth" stroke="#3b82f6" strokeWidth={2.5} dot={false} name="netWorth" />
         {comparisonSnapshots && (
           <Line type="monotone" dataKey="compNetWorth" stroke="#f59e0b" strokeWidth={2} strokeDasharray="6 3" dot={false} name="compNetWorth" />

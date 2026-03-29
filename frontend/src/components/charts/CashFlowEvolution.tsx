@@ -50,8 +50,8 @@ function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null
   const row: SegmentRow = payload[0]?.payload
   return (
-    <div style={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: 8, padding: '10px 14px', fontSize: 12 }}>
-      <p style={{ color: '#9ca3af', marginBottom: 6, fontWeight: 600 }}>{label} — Gross: {fmt(row.gross)}</p>
+    <div style={{ backgroundColor: '#181210', border: '1px solid #3d2e27', borderRadius: 8, padding: '10px 14px', fontSize: 12 }}>
+      <p style={{ color: '#9e7b68', marginBottom: 6, fontWeight: 600 }}>{label} — Gross: {fmt(row.gross)}</p>
       {SEGMENTS.map(seg => {
         const v = row[seg.key]
         if (!v) return null
@@ -59,7 +59,7 @@ function CustomTooltip({ active, payload, label }: any) {
         return (
           <div key={seg.key} style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
             <span style={{ color: seg.color }}>{seg.label}</span>
-            <span style={{ color: '#e5e7eb' }}>{fmt(v)} <span style={{ color: '#6b7280' }}>({pct}%)</span></span>
+            <span style={{ color: '#ede0d3' }}>{fmt(v)} <span style={{ color: '#7a5c4e' }}>({pct}%)</span></span>
           </div>
         )
       })}
@@ -99,9 +99,9 @@ export default function CashFlowEvolution({ snapshots }: Props) {
       </div>
       <ResponsiveContainer width="100%" height={200}>
         <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }} barCategoryGap="25%">
-          <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
-          <XAxis dataKey="label" stroke="#4b5563" tick={{ fill: '#6b7280', fontSize: 11 }} />
-          <YAxis stroke="#4b5563" tick={{ fill: '#6b7280', fontSize: 11 }} tickFormatter={fmtK} width={56} />
+          <CartesianGrid strokeDasharray="3 3" stroke="#2a1f1a" vertical={false} />
+          <XAxis dataKey="label" stroke="#5c443a" tick={{ fill: '#7a5c4e', fontSize: 11 }} />
+          <YAxis stroke="#5c443a" tick={{ fill: '#7a5c4e', fontSize: 11 }} tickFormatter={fmtK} width={56} />
           <Tooltip content={<CustomTooltip />} />
           {SEGMENTS.map((seg, i) => (
             <Bar

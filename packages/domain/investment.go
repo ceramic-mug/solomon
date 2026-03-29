@@ -52,6 +52,12 @@ type InvestmentAccount struct {
 	AssetAllocation  AssetAllocation `json:"asset_allocation"`
 	StartMonth       int             `json:"start_month"`
 
+	// OverflowPct is a fraction (0.0–1.0) of the monthly cash surplus (above
+	// the target cash flow) to sweep into this account. Unlike ContribBasis=remainder,
+	// this is ADDITIVE to any baseline contribution — the account still receives
+	// its normal fixed/gross/net contribution AND also receives this overflow share.
+	OverflowPct float64 `json:"overflow_pct"`
+
 	// Savings goal tracking (optional)
 	GoalTarget float64 `json:"goal_target"` // target balance; 0 = no goal
 	GoalLabel  string  `json:"goal_label"`  // e.g. "Emergency Fund", "College - Emma"
@@ -73,11 +79,16 @@ type GivingTarget struct {
 	ID          uuid.UUID    `json:"id"`
 	PlanID      uuid.UUID    `json:"plan_id"`
 	Name        string       `json:"name"`    // e.g. "Church Tithe", "Local Charity"
-	Basis       GivingBasis  `json:"basis"`   // gross or net
+	Basis       GivingBasis  `json:"basis"`   // gross, net, or remainder
 	Percentage  float64      `json:"percentage"` // e.g. 0.10 for 10%
 	FixedAmount *float64     `json:"fixed_amount,omitempty"` // optional fixed monthly amount instead of %
 	StartMonth  int          `json:"start_month"`
 	EndMonth    *int         `json:"end_month,omitempty"`
+
+	// OverflowPct is a fraction (0.0–1.0) of the monthly cash surplus to also
+	// direct here. ADDITIVE to the baseline Percentage/FixedAmount — the target
+	// still receives its normal gross/net giving AND this overflow share on top.
+	OverflowPct float64 `json:"overflow_pct"`
 }
 
 // GivingBasis determines what income base the giving percentage applies to.

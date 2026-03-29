@@ -412,14 +412,22 @@ func computeGoalProgress(accounts []domain.InvestmentAccount, snaps []domain.Mon
 	return out
 }
 
-// buildRunOptions extracts simulation run options from query parameters.
+// buildRunOptions extracts simulation run options from query parameters,
+// falling back to plan's stored filing_status and household_size.
 func buildRunOptions(c echo.Context, plan domain.Plan) simulation.RunOptions {
 	filing := simulation.FilingStatus(c.QueryParam("filing_status"))
 	if filing == "" {
-		filing = simulation.FilingStatusMarriedFilingJointly
+		if plan.SimulationConfig.FilingStatus != "" {
+			filing = simulation.FilingStatus(plan.SimulationConfig.FilingStatus)
+		} else {
+			filing = simulation.FilingStatusMarriedFilingJointly
+		}
 	}
 
-	householdSize := 2
+	householdSize := plan.SimulationConfig.HouseholdSize
+	if householdSize <= 0 {
+		householdSize = 2
+	}
 	if hs := c.QueryParam("household_size"); hs != "" {
 		if n, err := strconv.Atoi(hs); err == nil && n > 0 {
 			householdSize = n

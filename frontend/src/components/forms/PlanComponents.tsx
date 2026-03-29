@@ -7,13 +7,14 @@ import {
   createInvestment, updateInvestment, deleteInvestment,
   createEvent, updateEvent, deleteEvent,
   createGiving, updateGiving, deleteGiving,
+  createChild, updateChild, deleteChild,
   estimateSocialSecurity,
 } from '../../api/client'
 import type {
   Plan, IncomeStream, Expense, DebtAccount,
-  InvestmentAccount, LifeEvent, GivingTarget,
+  InvestmentAccount, LifeEvent, GivingTarget, Child,
   IncomeType, TaxCategory, ExpenseCategory,
-  DebtType, RepaymentPlan, AccountType, GivingBasis, ContribBasis, EventType,
+  DebtType, RepaymentPlan, AccountType, GivingBasis, ContribBasis, EventType, ChildSchoolPref,
 } from '../../api/types'
 import { Trash2, Edit2, Copy } from 'lucide-react'
 import Modal from '../Modal'
@@ -621,6 +622,7 @@ export function InvestmentForm({ planId, onClose, initialData }: {
         monthly_contrib: contribBasis === 'fixed' ? contrib : 0,
         contrib_basis: contribBasis,
         contrib_percent: contribBasis !== 'fixed' ? contribPercent / 100 : 0,
+        overflow_pct: initialData?.overflow_pct ?? 0,
         employer_match: match / 100,
         employer_match_cap: matchCap / 100,
         asset_allocation: {
@@ -880,6 +882,7 @@ export function GivingForm({ planId, onClose, initialData }: {
     mutationFn: () => {
       const data = {
         name, basis, percentage: percentage / 100,
+        overflow_pct: initialData?.overflow_pct ?? 0,
         start_month: startMonth,
       }
       if (initialData?.id) {
@@ -917,6 +920,7 @@ export function GivingTab({ plan }: { plan: Plan }) {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan', plan.id] }); qc.invalidateQueries({ queryKey: ['simulate', plan.id] }) },
   })
 
+
   return (
     <div className="space-y-3">
       {(plan.giving_targets ?? []).map(g => (
@@ -945,11 +949,209 @@ export function GivingTab({ plan }: { plan: Plan }) {
       )}
       <button onClick={() => setModal({ type: 'add' })} className="btn-secondary w-full text-sm">+ Add giving target</button>
       {modal && (
-        <Modal 
-          title={modal.type === 'edit' ? 'Edit Giving Target' : modal.type === 'copy' ? 'Copy Giving Target' : 'Add Giving Target'} 
+        <Modal
+          title={modal.type === 'edit' ? 'Edit Giving Target' : modal.type === 'copy' ? 'Copy Giving Target' : 'Add Giving Target'}
           onClose={() => setModal(null)}
         >
           <GivingForm planId={plan.id} onClose={() => setModal(null)} initialData={modal.data} />
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ============================================================
+// Children
+// ============================================================
+
+// Monthly cost estimates by phase (mirrors domain/child.go constants, in 2026$)
+const PHASE_LABELS: { maxAge: number; label: string; publicCost: string; privateCost: string }[] = [
+  { maxAge: 3,  label: 'Infant / Toddler',  publicCost: '$1,850/mo', privateCost: '$1,850/mo' },
+  { maxAge: 6,  label: 'Preschool',          publicCost: '$1,400/mo', privateCost: '$1,400/mo' },
+  { maxAge: 13, label: 'Elementary',         publicCost: '$850/mo',   privateCost: '$1,950/mo' },
+  { maxAge: 16, label: 'Middle School',      publicCost: '$1,050/mo', privateCost: '$2,150/mo' },
+  { maxAge: 18, label: 'High School',        publicCost: '$1,250/mo', privateCost: '$2,350/mo' },
+  { maxAge: 22, label: 'College',            publicCost: '$2,850/mo', privateCost: '$5,950/mo' },
+]
+
+export function ChildForm({ planId, onClose, initialData, plan }: {
+  planId: string
+  onClose: () => void
+  initialData?: Partial<Child>
+  plan: Plan
+}) {
+  const qc = useQueryClient()
+  const [name, setName] = useState(initialData?.name ?? '')
+  const [birthMonth, setBirthMonth] = useState(initialData?.birth_month ?? 0)
+  const [schoolPref, setSchoolPref] = useState<ChildSchoolPref>(initialData?.school_preference ?? 'public')
+  const [collegeAccountId, setCollegeAccountId] = useState(initialData?.college_account_id ?? '')
+  const [includeActivities, setIncludeActivities] = useState(initialData?.include_activities ?? true)
+  const [includeFirstCar, setIncludeFirstCar] = useState(initialData?.include_first_car ?? true)
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['plan', planId] })
+    qc.invalidateQueries({ queryKey: ['simulate', planId] })
+  }
+
+  const mut = useMutation({
+    mutationFn: () => {
+      const payload = {
+        name,
+        birth_month: birthMonth,
+        school_preference: schoolPref,
+        college_account_id: collegeAccountId || undefined,
+        include_activities: includeActivities,
+        include_first_car: includeFirstCar,
+      }
+      if (initialData?.id) {
+        return updateChild(planId, initialData.id, { ...payload, id: initialData.id, plan_id: planId })
+      }
+      return createChild(planId, payload)
+    },
+    onSuccess: () => { invalidate(); onClose() },
+  })
+
+  const eligible529s = (plan.investment_accounts ?? []).filter(a => a.type === '529')
+
+  const schoolOpts = [
+    { value: 'public',  label: 'Public school' },
+    { value: 'private', label: 'Private school (+$1,100/mo K-12)' },
+  ]
+
+  return (
+    <form onSubmit={e => { e.preventDefault(); mut.mutate() }} className="space-y-4">
+      <Field label="Child's name">
+        <Str value={name} onChange={setName} placeholder="e.g. Emma" />
+      </Field>
+
+      <Field label="Birth month (0 = plan start; negative = already born)">
+        <Num value={birthMonth} onChange={setBirthMonth} placeholder="0" step={1} />
+      </Field>
+
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Schooling">
+          <Select value={schoolPref} onChange={v => setSchoolPref(v as ChildSchoolPref)} options={schoolOpts} />
+        </Field>
+        <Field label="Linked 529 for college">
+          <select
+            value={collegeAccountId}
+            onChange={e => setCollegeAccountId(e.target.value)}
+            className="input w-full"
+          >
+            <option value="">None (expense college directly)</option>
+            {eligible529s.map(a => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      <div className="space-y-2">
+        <Check label="Include sports & activities (+$100–375/mo by phase)" value={includeActivities} onChange={setIncludeActivities} />
+        <Check label="Include first car at 16 ($18k one-time + $275/mo insurance to 18)" value={includeFirstCar} onChange={setIncludeFirstCar} />
+      </div>
+
+      {/* Cost preview table */}
+      <div className="rounded-lg border border-gray-700/40 bg-gray-800/20 p-3">
+        <p className="text-xs font-medium text-gray-400 mb-2">Projected monthly costs (2026$, inflation-adjusted in simulation)</p>
+        <table className="w-full text-[11px] text-gray-400">
+          <thead>
+            <tr className="border-b border-gray-700/40">
+              <th className="text-left pb-1 font-medium">Phase</th>
+              <th className="text-right pb-1 font-medium">Est. cost/mo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {PHASE_LABELS.map(p => (
+              <tr key={p.label} className="border-b border-gray-800/40 last:border-0">
+                <td className="py-0.5 text-gray-500">{p.label}</td>
+                <td className="py-0.5 text-right font-mono text-gray-300">
+                  {schoolPref === 'private' ? p.privateCost : p.publicCost}
+                  {includeActivities && p.maxAge >= 6 && p.maxAge <= 18 && (
+                    <span className="text-teal-500 ml-1">+act.</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {collegeAccountId && (
+          <p className="text-[10px] text-teal-400 mt-2">
+            ✦ College costs drawn from linked 529 first; any shortfall charged to expenses.
+          </p>
+        )}
+      </div>
+
+      <SaveCancel onCancel={onClose} isPending={mut.isPending} />
+    </form>
+  )
+}
+
+export function ChildrenTab({ plan }: { plan: Plan }) {
+  const [modal, setModal] = useState<{ type: 'add' | 'edit'; data?: Partial<Child> } | null>(null)
+  const qc = useQueryClient()
+  const delMut = useMutation({
+    mutationFn: (id: string) => deleteChild(plan.id, id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['plan', plan.id] })
+      qc.invalidateQueries({ queryKey: ['simulate', plan.id] })
+    },
+  })
+
+  const children = plan.children ?? []
+  const investments = plan.investment_accounts ?? []
+
+  return (
+    <div className="space-y-3">
+      {children.map(ch => {
+        const linked529 = investments.find(a => a.id === ch.college_account_id)
+        return (
+          <div key={ch.id} className="card">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="font-medium text-white">{ch.name}</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {ch.school_preference === 'private' ? 'Private school' : 'Public school'}
+                  {ch.include_activities ? ' · activities' : ''}
+                  {ch.include_first_car ? ' · first car at 16' : ''}
+                </p>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  {ch.birth_month >= 0
+                    ? `Starts month ${ch.birth_month}`
+                    : `Born ${Math.abs(ch.birth_month)} mo before plan start`}
+                </p>
+                {linked529 && (
+                  <p className="text-[11px] text-teal-400 mt-1">529 linked: {linked529.name}</p>
+                )}
+              </div>
+              <RowActions
+                onEdit={() => setModal({ type: 'edit', data: ch })}
+                onCopy={() => {
+                  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                  const { id, ...rest } = ch
+                  setModal({ type: 'add', data: { ...rest, name: `${ch.name} (copy)` } })
+                }}
+                onDelete={() => delMut.mutate(ch.id)}
+                isPending={delMut.isPending}
+              />
+            </div>
+          </div>
+        )
+      })}
+      {children.length === 0 && (
+        <p className="text-gray-600 text-sm py-8 text-center">
+          No children modeled yet. Add a child to project costs through college.
+        </p>
+      )}
+      <button onClick={() => setModal({ type: 'add' })} className="btn-secondary w-full text-sm">
+        + Add child
+      </button>
+      {modal && (
+        <Modal
+          title={modal.type === 'edit' ? `Edit ${modal.data?.name ?? 'Child'}` : 'Add Child'}
+          onClose={() => setModal(null)}
+        >
+          <ChildForm planId={plan.id} onClose={() => setModal(null)} initialData={modal.data} plan={plan} />
         </Modal>
       )}
     </div>

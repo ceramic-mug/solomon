@@ -4,57 +4,137 @@
 
 @layer base {
   :root {
-    --color-bg: #0a0e1a;
-    --color-surface: #111827;
-    --color-border: #1f2937;
-    --color-text: #f9fafb;
-    --color-muted: #6b7280;
+    --color-bg:      #0e0b08;
+    --color-surface: #181210;
+    --color-card:    #1f1714;
+    --color-border:  #2a1f1a;
+    --color-text:    #ede0d3;
+    --color-muted:   #7a5c4e;
+    --color-accent:  #d48200;
+  }
+
+  html {
+    background-color: #0e0b08;
   }
 
   body {
-    @apply bg-gray-950 text-gray-100 antialiased;
+    background-color: #0e0b08;
+    color: #ede0d3;
+    @apply antialiased;
     font-family: 'Inter', system-ui, sans-serif;
   }
 
+  /* All default borders use warm tone */
   * {
-    @apply border-gray-800;
+    border-color: #2a1f1a;
   }
 
-  /* Custom scrollbar */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { @apply bg-gray-900; }
-  ::-webkit-scrollbar-thumb { @apply bg-gray-700 rounded-full; }
-  ::-webkit-scrollbar-thumb:hover { @apply bg-gray-600; }
+  /* Custom scrollbar — warm tones */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: #181210; }
+  ::-webkit-scrollbar-thumb { background: #3d2e27; border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: #5c443a; }
+
+  /* Selection */
+  ::selection { background: #6b3a00; color: #fbd89a; }
+
+  /* Form elements styled warmly by @tailwindcss/forms override */
+  [type='text'],
+  [type='email'],
+  [type='password'],
+  [type='number'],
+  [type='search'],
+  textarea,
+  select {
+    background-color: #181210 !important;
+    border-color: #3d2e27 !important;
+    color: #ede0d3 !important;
+  }
+  [type='text']:focus,
+  [type='email']:focus,
+  [type='password']:focus,
+  [type='number']:focus,
+  textarea:focus,
+  select:focus {
+    border-color: #d48200 !important;
+    box-shadow: 0 0 0 2px rgba(212, 130, 0, 0.2) !important;
+    outline: none !important;
+  }
+  [type='checkbox'] {
+    accent-color: #d48200;
+  }
+  select option {
+    background-color: #1f1714;
+  }
 }
 
 @layer components {
+  /* ---- Cards ---- */
   .card {
-    @apply bg-gray-900 border border-gray-800 rounded-xl p-6;
+    background-color: #1f1714;
+    border: 1px solid #2a1f1a;
+    @apply rounded-xl p-6;
   }
+
+  /* ---- Buttons ---- */
   .btn-primary {
-    @apply bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-lg transition-colors;
+    background-color: #b36800;
+    color: #fdf0d5;
+    @apply font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer;
   }
+  .btn-primary:hover:not(:disabled) { background-color: #d48200; }
+  .btn-primary:disabled { opacity: 0.35; cursor: not-allowed; }
+
   .btn-secondary {
-    @apply bg-gray-800 hover:bg-gray-700 text-gray-200 font-medium px-4 py-2 rounded-lg transition-colors;
+    background-color: #2a1f1a;
+    color: #c4a48e;
+    border: 1px solid #3d2e27;
+    @apply font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer;
   }
+  .btn-secondary:hover:not(:disabled) {
+    background-color: #332620;
+    color: #ede0d3;
+    border-color: #5c443a;
+  }
+  .btn-secondary:disabled { opacity: 0.35; cursor: not-allowed; }
+
   .btn-ghost {
-    @apply hover:bg-gray-800 text-gray-400 hover:text-gray-200 font-medium px-3 py-1.5 rounded-lg transition-colors;
+    color: #9e7b68;
+    @apply font-medium px-3 py-1.5 rounded-lg transition-colors cursor-pointer;
   }
+  .btn-ghost:hover {
+    background-color: #2a1f1a;
+    color: #ede0d3;
+  }
+
+  /* ---- Inputs ---- */
   .input {
-    @apply bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+    background-color: #181210;
+    border: 1px solid #3d2e27;
+    color: #ede0d3;
+    @apply rounded-lg px-3 py-2 focus:outline-none transition-colors w-full;
   }
-  .label {
-    @apply text-sm font-medium text-gray-400 mb-1 block;
+  .input:focus {
+    border-color: #d48200;
+    box-shadow: 0 0 0 2px rgba(212, 130, 0, 0.2);
   }
+  .input::placeholder { color: #5c443a; }
+  .input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ---- Stat cards ---- */
   .stat-card {
     @apply card flex flex-col gap-1;
   }
   .stat-value {
-    @apply text-2xl font-semibold text-gray-100;
+    @apply text-2xl font-semibold;
+    color: #ede0d3;
   }
   .stat-label {
-    @apply text-xs text-gray-500 uppercase tracking-wide;
+    color: #7a5c4e;
+    @apply text-xs uppercase tracking-wide;
   }
-  .positive { @apply text-emerald-400; }
-  .negative { @apply text-red-400; }
+
+  /* ---- Semantic colors ---- */
+  .positive { color: #78c080; }
+  .negative { color: #e06050; }
 }

@@ -37,15 +37,16 @@ function formatFull(v: number) {
 }
 
 const LINE_LABELS: Record<string, string> = {
-  netWorth:       'Net Worth',
-  debt:           'Total Debt',
-  investments:    'Investments',
-  savings:        'Liquid Savings',
-  homeEquity:     'Home Equity',
-  cashFlow:       'Cash Flow/mo',
-  giving:         'Monthly Giving',
-  netWorthB:      'Net Worth (B)',
-  netWorthWhatIf: 'Net Worth (what-if)',
+  netWorth:          'Net Worth',
+  debt:              'Total Debt',
+  investments:       'Investments',
+  savings:           'Liquid Savings',
+  homeEquity:        'Home Equity',
+  cashFlow:          'Cash Flow/mo',
+  giving:            'Monthly Giving',
+  accumulatedGiving: 'Accumulated Giving',
+  netWorthB:         'Net Worth (B)',
+  netWorthWhatIf:    'Net Worth (what-if)',
 }
 
 export default function FinancialOverviewChart({
@@ -67,6 +68,7 @@ export default function FinancialOverviewChart({
   const hasSavings = savingsAccountIds.length > 0 &&
     yearly.some(s => savingsAccountIds.some(id => (s.investment_balances?.[id] ?? 0) > 0))
   const hasGiving = yearly.some(s => (s.total_giving ?? 0) > 0)
+  const hasAccumulatedGiving = yearly.some(s => (s.accumulated_giving ?? 0) > 0)
   const hasComparison = !!comparisonSnapshots?.length
   const hasWhatIf = !!whatIfSnapshots?.length
 
@@ -103,8 +105,9 @@ export default function FinancialOverviewChart({
       investments: Math.round(s.total_investments),
       savings:     hasSavings ? Math.round(savingsBalance) : undefined,
       homeEquity:  hasHomeEquity ? Math.round(s.home_equity ?? 0) : undefined,
-      cashFlow:    Math.round(s.cash_flow),
-      giving:      hasGiving ? Math.round(s.total_giving) : undefined,
+      cashFlow:          Math.round(s.cash_flow),
+      giving:            hasGiving ? Math.round(s.total_giving) : undefined,
+      accumulatedGiving: hasAccumulatedGiving ? Math.round(s.accumulated_giving ?? 0) : undefined,
     }
     if (hasComparison) {
       const b = compByYear.get(s.year)
@@ -141,25 +144,25 @@ export default function FinancialOverviewChart({
         onClick={handleClick}
         style={{ cursor: onClickYear ? 'crosshair' : 'default' }}
       >
-        <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-        <XAxis dataKey="year" stroke="#4b5563" tick={{ fill: '#6b7280', fontSize: 11 }} />
+        <CartesianGrid strokeDasharray="3 3" stroke="#2a1f1a" />
+        <XAxis dataKey="year" stroke="#3d2e27" tick={{ fill: '#7a5c4e', fontSize: 11 }} />
         <YAxis
-          stroke="#4b5563"
-          tick={{ fill: '#6b7280', fontSize: 11 }}
+          stroke="#3d2e27"
+          tick={{ fill: '#7a5c4e', fontSize: 11 }}
           tickFormatter={formatDollar}
           width={64}
         />
         <Tooltip
-          contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px', fontSize: 12 }}
-          labelStyle={{ color: '#9ca3af', marginBottom: 4 }}
+          contentStyle={{ backgroundColor: '#181210', border: '1px solid #3d2e27', borderRadius: '8px', fontSize: 12 }}
+          labelStyle={{ color: '#9e7b68', marginBottom: 4 }}
           formatter={(v: number, name: string) => [formatFull(v), LINE_LABELS[name] ?? name]}
         />
         <Legend
           formatter={value => (
-            <span style={{ color: '#9ca3af', fontSize: 11 }}>{LINE_LABELS[value] ?? value}</span>
+            <span style={{ color: '#9e7b68', fontSize: 11 }}>{LINE_LABELS[value] ?? value}</span>
           )}
         />
-        <ReferenceLine y={0} stroke="#374151" strokeWidth={1} />
+        <ReferenceLine y={0} stroke="#3d2e27" strokeWidth={1} />
 
         {debtFreeYear && (
           <ReferenceLine
@@ -212,6 +215,9 @@ export default function FinancialOverviewChart({
         <Line type="monotone" dataKey="cashFlow" stroke="#a78bfa" strokeWidth={1.5} dot={false} name="cashFlow" strokeDasharray="4 2" />
         {hasGiving && (
           <Line type="monotone" dataKey="giving" stroke="#14b8a6" strokeWidth={1.5} dot={false} name="giving" strokeDasharray="3 2" />
+        )}
+        {hasAccumulatedGiving && (
+          <Line type="monotone" dataKey="accumulatedGiving" stroke="#2dd4bf" strokeWidth={2} dot={false} name="accumulatedGiving" strokeDasharray="6 2" />
         )}
         <Line type="monotone" dataKey="netWorth" stroke="#3b82f6" strokeWidth={2.5} dot={false} name="netWorth" />
 

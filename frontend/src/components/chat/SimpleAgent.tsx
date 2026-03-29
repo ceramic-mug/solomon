@@ -1,15 +1,42 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Send, Loader2, Sparkles, CheckCircle2 } from 'lucide-react'
+import { Send, Loader2, Sparkles, CheckCircle2, AlertCircle } from 'lucide-react'
+
+interface ToolEvent {
+  tool: string
+  status: 'running' | 'done'
+}
+
+const TOOL_LABELS: Record<string, string> = {
+  add_income: 'Income stream',
+  add_debt: 'Debt account',
+  add_investment: 'Investment account',
+  add_expense: 'Expense',
+  add_giving: 'Giving target',
+  add_child: 'Child',
+  add_life_event: 'Life event',
+  set_cash_flow_constraint: 'Cash flow constraint',
+  set_net_worth_ceiling: 'Net worth ceiling',
+  modify_income: 'Updated income',
+  modify_expense: 'Updated expense',
+  modify_debt: 'Updated debt',
+  modify_investment: 'Updated investment',
+  delete_income: 'Removed income',
+  delete_expense: 'Removed expense',
+  delete_debt: 'Removed debt',
+  delete_investment: 'Removed investment',
+  create_fork: 'Plan fork',
+}
 
 export default function SimpleAgent({ planId }: { planId: string }) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [lastApplied, setLastApplied] = useState<string | null>(null)
+  const [liveTools, setLiveTools] = useState<ToolEvent[]>([])
+  const [appliedCount, setAppliedCount] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const qc = useQueryClient()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Auto-resize textarea as user types
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
@@ -20,9 +47,12 @@ export default function SimpleAgent({ planId }: { planId: string }) {
   const handleSend = async () => {
     if (!input.trim() || loading) return
     setLoading(true)
-    setLastApplied(null)
+    setLiveTools([])
+    setAppliedCount(null)
+    setError(null)
     const message = input.trim()
     setInput('')
+
     try {
       const token = localStorage.getItem('access_token')
       const res = await fetch('/ai/chat', {
@@ -36,14 +66,56 @@ export default function SimpleAgent({ planId }: { planId: string }) {
           message: 'Use tool calls to apply this directly to the plan, do not ask for confirmation: ' + message,
         }),
       })
+
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || `Request failed (${res.status})`)
+      }
+
       if (res.body) {
         const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let buf = ''
         while (true) {
-          const { done } = await reader.read()
+          const { done, value } = await reader.read()
           if (done) break
+          buf += decoder.decode(value, { stream: true })
+          const lines = buf.split('\n')
+          buf = lines.pop() ?? ''
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const data = line.slice(6).trim()
+            if (!data || data === '[DONE]') continue
+            try {
+              const evt = JSON.parse(data)
+              if (evt.type === 'tool_call') {
+                setLiveTools(prev => [...prev, { tool: evt.tool, status: 'running' }])
+              } else if (evt.type === 'tool_result') {
+                setLiveTools(prev => {
+                  const next = [...prev]
+                  // find last running instance of this tool
+                  let idx = -1
+                  for (let j = next.length - 1; j >= 0; j--) {
+                    if (next[j].tool === evt.tool && next[j].status === 'running') { idx = j; break }
+                  }
+                  if (idx >= 0) next[idx] = { tool: evt.tool, status: 'done' }
+                  return next
+                })
+              }
+            } catch {
+              // non-JSON SSE line, ignore
+            }
+          }
         }
       }
-      setLastApplied(message)
+
+      setLiveTools(prev => {
+        const count = prev.filter(t => t.status === 'done').length
+        setAppliedCount(count)
+        return prev
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
       await qc.invalidateQueries({ queryKey: ['plan', planId] })
       await qc.invalidateQueries({ queryKey: ['simulate', planId] })
@@ -58,6 +130,9 @@ export default function SimpleAgent({ planId }: { planId: string }) {
     }
   }
 
+  const doneTools = liveTools.filter(t => t.status === 'done')
+  const runningTools = liveTools.filter(t => t.status === 'running')
+
   return (
     <div className="card bg-blue-900/10 border-blue-800/30 p-4">
       <div className="flex items-center gap-2 mb-2 text-blue-400">
@@ -69,10 +144,43 @@ export default function SimpleAgent({ planId }: { planId: string }) {
         Describe your financial situation or any change — income, debts, expenses, PSLF status, life events — and it'll be applied to your plan.
       </p>
 
-      {lastApplied && !loading && (
-        <div className="mb-2.5 flex items-start gap-1.5 text-xs text-emerald-400/80">
-          <CheckCircle2 size={12} className="shrink-0 mt-0.5" />
-          <span className="line-clamp-2">Applied: "{lastApplied}"</span>
+      {/* Live tool feed */}
+      {liveTools.length > 0 && (
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {liveTools.map((t, i) => (
+            <span
+              key={i}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-all ${
+                t.status === 'running'
+                  ? 'bg-blue-500/15 text-blue-300 border border-blue-500/25'
+                  : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/25'
+              }`}
+            >
+              {t.status === 'running'
+                ? <Loader2 size={10} className="animate-spin" />
+                : <CheckCircle2 size={10} />
+              }
+              {TOOL_LABELS[t.tool] ?? t.tool}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Done summary */}
+      {!loading && appliedCount !== null && runningTools.length === 0 && (
+        <div className="mb-3 flex items-center gap-1.5 text-xs text-emerald-400/90">
+          <CheckCircle2 size={12} className="shrink-0" />
+          <span>
+            Applied {doneTools.length} change{doneTools.length !== 1 ? 's' : ''} · simulation updated
+          </span>
+        </div>
+      )}
+
+      {/* Error */}
+      {error && (
+        <div className="mb-3 flex items-start gap-1.5 text-xs text-red-400/90">
+          <AlertCircle size={12} className="shrink-0 mt-0.5" />
+          <span>{error}</span>
         </div>
       )}
 

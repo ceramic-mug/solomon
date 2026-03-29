@@ -36,5 +36,6 @@ func Migrate(db *gorm.DB) error {
 		&GivingTargetModel{},
 		&LifeEventModel{},
 		&EventImpactModel{},
+		&ChildModel{},
 	)
 }

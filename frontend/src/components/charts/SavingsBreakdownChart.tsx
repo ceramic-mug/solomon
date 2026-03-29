@@ -75,17 +75,17 @@ export default function SavingsBreakdownChart({ snapshots, accounts, height = 32
   return (
     <ResponsiveContainer width="100%" height={height}>
       <ComposedChart data={data} margin={{ top: 16, right: 24, bottom: 0, left: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-        <XAxis dataKey="year" stroke="#4b5563" tick={{ fill: '#6b7280', fontSize: 11 }} />
+        <CartesianGrid strokeDasharray="3 3" stroke="#2a1f1a" />
+        <XAxis dataKey="year" stroke="#5c443a" tick={{ fill: '#7a5c4e', fontSize: 11 }} />
         <YAxis
-          stroke="#4b5563"
-          tick={{ fill: '#6b7280', fontSize: 11 }}
+          stroke="#5c443a"
+          tick={{ fill: '#7a5c4e', fontSize: 11 }}
           tickFormatter={formatDollar}
           width={64}
         />
         <Tooltip
-          contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px', fontSize: 12 }}
-          labelStyle={{ color: '#9ca3af', marginBottom: 4 }}
+          contentStyle={{ backgroundColor: '#181210', border: '1px solid #3d2e27', borderRadius: '8px', fontSize: 12 }}
+          labelStyle={{ color: '#9e7b68', marginBottom: 4 }}
           formatter={(v: number, id: string) => {
             const acct = activeAccounts.find(a => a.id === id)
             const label = acct ? `${acct.name} (${TYPE_LABELS[acct.type] ?? acct.type})` : id
@@ -97,9 +97,9 @@ export default function SavingsBreakdownChart({ snapshots, accounts, height = 32
             const acct = activeAccounts.find(a => a.id === id)
             if (!acct) return id
             return (
-              <span style={{ color: '#9ca3af', fontSize: 11 }}>
+              <span style={{ color: '#9e7b68', fontSize: 11 }}>
                 {acct.name}
-                <span style={{ color: '#4b5563', marginLeft: 4 }}>
+                <span style={{ color: '#5c443a', marginLeft: 4 }}>
                   {TYPE_LABELS[acct.type] ?? acct.type}
                 </span>
               </span>

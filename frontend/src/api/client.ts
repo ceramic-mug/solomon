@@ -3,7 +3,7 @@ import type {
   AuthResponse, Plan, SimulationResult, PlanComparisonFull,
   RepaymentComparison, SocialSecurityEstimate, SimulateOverrideRequest,
   IncomeStream, Expense, DebtAccount, InvestmentAccount, LifeEvent, GivingTarget,
-  SimulationConfig,
+  SimulationConfig, Child,
 } from './types'
 
 // Axios instance — all requests go through here.
@@ -184,3 +184,14 @@ export const updateGiving = (planId: string, id: string, data: GivingTarget) =>
 
 export const deleteGiving = (planId: string, id: string) =>
   api.delete(`/plans/${planId}/giving/${id}`)
+
+// ---- Children ----
+
+export const createChild = (planId: string, data: Omit<Child, 'id' | 'plan_id'>) =>
+  api.post<Child>(`/plans/${planId}/children`, data).then(r => r.data)
+
+export const updateChild = (planId: string, id: string, data: Child) =>
+  api.put<Child>(`/plans/${planId}/children/${id}`, data).then(r => r.data)
+
+export const deleteChild = (planId: string, id: string) =>
+  api.delete(`/plans/${planId}/children/${id}`)

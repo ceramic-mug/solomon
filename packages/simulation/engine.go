@@ -45,6 +45,7 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 	yearlyContribs := make(map[domain.AccountType]float64)
 
 	snapshots := make([]domain.MonthSnapshot, 0, totalMonths)
+	var accumulatedGiving float64
 
 	// Monte Carlo inputs (populated during deterministic pass)
 	mcInputs := make([]MCMonthInput, 0, totalMonths)
@@ -123,9 +124,11 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 				continue
 			}
 			if g.Basis == domain.GivingBasisRemainder {
+				// Legacy remainder-only: no baseline, only overflow
 				givingRemainders = append(givingRemainders, givingRemainder{index: i, pct: g.Percentage})
 				continue
 			}
+			// Process baseline giving (gross/net/fixed)
 			if g.FixedAmount != nil {
 				givingItems[i] = *g.FixedAmount
 			} else {
@@ -136,6 +139,10 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 				givingItems[i] = base * g.Percentage
 			}
 			totalFixedGiving += givingItems[i]
+			// Also register for additive overflow if OverflowPct > 0
+			if g.OverflowPct > 0 {
+				givingRemainders = append(givingRemainders, givingRemainder{index: i, pct: g.OverflowPct})
+			}
 		}
 
 		// ---- Expenses ----
@@ -234,12 +241,14 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 			if m < inv.StartMonth {
 				continue
 			}
-			
+
 			if inv.ContribBasis == domain.ContribBasisRemainder {
+				// Legacy remainder-only: no baseline, only overflow
 				investRemainders = append(investRemainders, invRemainder{index: i, pct: inv.ContribPercent})
 				continue
 			}
 
+			// Process baseline contribution (fixed/gross/net)
 			var contrib float64
 			switch inv.ContribBasis {
 			case domain.ContribBasisGross:
@@ -265,6 +274,11 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 			isSavings := inv.Type == domain.AccountTypeSavings || inv.Type == domain.AccountTypeMoneyMarket || inv.Type == domain.AccountTypeCash
 			desiredInvestContribs = append(desiredInvestContribs, invContrib{index: i, amount: contrib, isSavings: isSavings})
 			totalDesiredInvest += contrib
+
+			// Also register for additive overflow if OverflowPct > 0
+			if inv.OverflowPct > 0 {
+				investRemainders = append(investRemainders, invRemainder{index: i, pct: inv.OverflowPct})
+			}
 		}
 
 		// ---- Cash Flow Constrainer Logic ----
@@ -354,6 +368,8 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 		for _, amt := range actualGiving {
 			totalGiving += amt
 		}
+		// Income-flow giving (excludes ceiling divestiture) — used for cash flow calculation
+		incomeTotalGiving := totalGiving
 
 		// ---- Apply investment compounding and actual contributions ----
 		var totalInvestments float64
@@ -413,33 +429,118 @@ func Run(plan domain.Plan, opts RunOptions) domain.SimulationResult {
 			totalCashPct /= totalBalance
 		}
 
-		// Per-investment balance snapshot
+		// ---- Child Cost Expenses ----
+		// For each child, compute age-appropriate costs this month with inflation adjustment.
+		// If the child has a linked 529 account and is in the college phase, withdraw from
+		// that account before charging the remainder to expenses.
+		inflationFactor := math.Pow(1+cfg.InflationRate, float64(m)/12.0)
+		for _, child := range plan.Children {
+			ageMonths := m - child.BirthMonth
+			if ageMonths < 0 || ageMonths >= domain.ChildCollegeEndAgeMonths {
+				continue // not yet born, or done with college
+			}
+
+			baseCost := domain.ChildMonthlyBaseCost(
+				ageMonths,
+				child.SchoolPreference,
+				child.IncludeActivities,
+				child.IncludeFirstCar && ageMonths >= domain.ChildFirstCarAgeMonths,
+			)
+			if baseCost == 0 {
+				continue
+			}
+
+			// One-time first-car purchase at exactly age 16
+			if child.IncludeFirstCar && ageMonths == domain.ChildFirstCarAgeMonths {
+				totalExpenses += domain.ChildFirstCarCost * inflationFactor
+			}
+
+			monthlyCost := baseCost * inflationFactor
+
+			// College phase: attempt to fund from linked 529 before charging to expenses
+			if ageMonths >= domain.ChildCollegeStartAgeMonths && child.CollegeAccountID != nil {
+				funded := false
+				for i, inv := range investments {
+					if inv.ID == *child.CollegeAccountID && investments[i].Balance >= monthlyCost {
+						investments[i].Balance -= monthlyCost
+						totalInvestments -= monthlyCost
+						funded = true
+						break
+					} else if inv.ID == *child.CollegeAccountID && investments[i].Balance > 0 {
+						// Partial funding: draw down what's available, charge the rest
+						remainder := monthlyCost - investments[i].Balance
+						totalInvestments -= investments[i].Balance
+						investments[i].Balance = 0
+						monthlyCost = remainder
+						break
+					}
+				}
+				if funded {
+					continue
+				}
+			}
+
+			totalExpenses += monthlyCost
+		}
+
+		// ---- Net Worth Ceiling Constrainer ----
+		// When enabled, any net worth above the ceiling is liquidated from investment balances
+		// proportionally and treated as charitable giving for that month.
+		var ceilingDivertedToGiving float64
+		if cfg.NetWorthCeilingEnabled && cfg.NetWorthCeiling > 0 {
+			projectedNetWorth := totalInvestments - totalDebt + totalHomeEquity
+			if projectedNetWorth > cfg.NetWorthCeiling {
+				excess := projectedNetWorth - cfg.NetWorthCeiling
+				if totalInvestments > 0 {
+					for i := range investments {
+						if m < investments[i].StartMonth || investments[i].Balance <= 0 {
+							continue
+						}
+						share := investments[i].Balance / totalInvestments
+						investments[i].Balance -= share * excess
+						if investments[i].Balance < 0 {
+							investments[i].Balance = 0
+						}
+					}
+				}
+				totalInvestments = math.Max(0, totalInvestments-excess)
+				ceilingDivertedToGiving = excess
+				totalGiving += excess
+			}
+		}
+
+		// Per-investment balance snapshot (after ceiling adjustment)
 		invBals := make(map[string]float64, len(investments))
 		for _, inv := range investments {
 			invBals[inv.ID.String()] = inv.Balance
 		}
 
-		cashFlow := netIncome - totalExpenses - totalDebtPayments - totalGiving - totalInvestContrib
+		// Cash flow uses only income-flow giving (ceiling divestiture comes from existing balances,
+		// not from monthly income, so it would distort the monthly budget picture)
+		cashFlow := netIncome - totalExpenses - totalDebtPayments - incomeTotalGiving - totalInvestContrib
 		netWorth := totalInvestments - totalDebt + totalHomeEquity
+		accumulatedGiving += totalGiving
 
 		snap := domain.MonthSnapshot{
-			Month:              m,
-			Year:               calYear,
-			CalendarMonth:      calMonth,
-			GrossIncome:        grossIncome,
-			TaxesPaid:          monthlyTax,
-			NetIncome:          netIncome,
-			TotalExpenses:      totalExpenses,
-			TotalDebtPayments:  totalDebtPayments,
-			TotalInterestPaid:  totalInterestPaid,
-			TotalGiving:        totalGiving,
-			TotalInvestContrib: totalInvestContrib,
-			CashFlow:           cashFlow,
-			TotalDebt:          totalDebt,
-			TotalInvestments:   totalInvestments,
-			NetWorth:           netWorth,
-			DebtBalances:       debtBals,
-			InvestmentBalances: invBals,
+			Month:                   m,
+			Year:                    calYear,
+			CalendarMonth:           calMonth,
+			GrossIncome:             grossIncome,
+			TaxesPaid:               monthlyTax,
+			NetIncome:               netIncome,
+			TotalExpenses:           totalExpenses,
+			TotalDebtPayments:       totalDebtPayments,
+			TotalInterestPaid:       totalInterestPaid,
+			TotalGiving:             totalGiving,
+			TotalInvestContrib:      totalInvestContrib,
+			CashFlow:                cashFlow,
+			TotalDebt:               totalDebt,
+			TotalInvestments:        totalInvestments,
+			NetWorth:                netWorth,
+			DebtBalances:            debtBals,
+			InvestmentBalances:      invBals,
+			AccumulatedGiving:       accumulatedGiving,
+			CeilingDivertedToGiving: ceilingDivertedToGiving,
 		}
 		if totalPSLFQualifying > 0 {
 			snap.PSLFQualifyingPayments = totalPSLFQualifying

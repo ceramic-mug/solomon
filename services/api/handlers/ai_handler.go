@@ -239,6 +239,95 @@ func (h *AIHandler) runAgent(
 	}
 }
 
+// Structure handles POST /ai/structure — converts prose plan description into
+// structured, itemized markdown with explicit assumptions. No tool calls; text only.
+func (h *AIHandler) Structure(c echo.Context) error {
+	var req struct {
+		PlanID string `json:"plan_id"`
+		Text   string `json:"text"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if req.Text == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "text is required")
+	}
+
+	claims := mw.GetClaims(c)
+
+	// Fetch plan for start date context (best-effort; don't fail if missing)
+	startContext := ""
+	if req.PlanID != "" {
+		if planID, err := uuid.Parse(req.PlanID); err == nil {
+			if plan, err := h.repo.GetPlan(c.Request().Context(), planID); err == nil && plan.ProfileID == claims.ProfileID {
+				monthNames := []string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
+				m := plan.SimulationConfig.StartMonth - 1
+				if m < 0 || m > 11 {
+					m = 0
+				}
+				startContext = fmt.Sprintf("The plan starts %s %d (simulation Month 0).",
+					monthNames[m], plan.SimulationConfig.StartYear)
+			}
+		}
+	}
+
+	prompt := fmt.Sprintf(`You are a financial planning assistant for a physician. Convert the following informal financial description into a well-structured, itemized markdown plan that will be reviewed and edited by the user before being used to build a simulation.
+
+%s
+
+For each financial element, produce a bullet point with all known details, and use sub-bullets to make every assumption explicit — including values you are inferring or using as defaults. Be specific and concrete.
+
+Guidelines:
+- Dollar amounts: use the numbers given; assume annual salary unless stated otherwise
+- Months: express as concrete calendar months when possible (e.g., "starts July 2026")
+- Growth rates: assume 3%% annual wage growth for salary unless stated
+- Tax categories: W-2 for employed salary; self-employed for 1099/private practice; passive for rental
+- Student loans: note the repayment plan, estimated IDR payment using the stated income/poverty line, PSLF qualifying payment count, and expected forgiveness timeline
+- Investments: note account type (403b/401k/IRA/HSA/taxable), employer match, annual IRS contribution limits
+- Giving: note whether percentage is of gross or net income
+- Expenses: note category (housing/food/transport/healthcare/insurance/etc.)
+
+Use only these sections (omit empty ones):
+## Income
+## Debts
+## Monthly Expenses
+## Savings & Investments
+## Giving
+## Family & Children
+## Goals
+
+Format:
+- **Item name**: one-line description
+  - key detail, key detail, ...
+  - Assumed: [assumption 1]; [assumption 2]; ...
+
+Description to structure:
+%s`, startContext, req.Text)
+
+	ctx := c.Request().Context()
+	client, err := genai.NewClient(ctx, option.WithAPIKey(h.apiKey))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "AI client error")
+	}
+	defer client.Close()
+
+	model := client.GenerativeModel("gemini-3-flash-preview")
+	// No tools — pure text structuring
+	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+	if err != nil || len(resp.Candidates) == 0 {
+		return echo.NewHTTPError(http.StatusInternalServerError, "AI structuring failed")
+	}
+
+	var markdown string
+	for _, part := range resp.Candidates[0].Content.Parts {
+		if t, ok := part.(genai.Text); ok {
+			markdown += string(t)
+		}
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"markdown": markdown})
+}
+
 // ---- Tool execution ----
 
 func (h *AIHandler) executeTool(
@@ -528,6 +617,9 @@ func (h *AIHandler) executeTool(
 					p.IncomeStreams[i].GrowthRate = newValue / 100
 				case "start_month":
 					p.IncomeStreams[i].StartMonth = int(newValue)
+				case "end_month":
+					n := int(newValue)
+					p.IncomeStreams[i].EndMonth = &n
 				}
 				if err := h.repo.UpdateIncomeStream(ctx, p.IncomeStreams[i]); err != nil {
 					return nil, err
@@ -536,6 +628,170 @@ func (h *AIHandler) executeTool(
 			}
 		}
 		return nil, fmt.Errorf("income stream not found")
+
+	case "modify_expense":
+		id := planID
+		if s, ok := args["plan_id"].(string); ok {
+			if p, err := uuid.Parse(s); err == nil {
+				id = p
+			}
+		}
+		expIDStr := getString(args, "expense_id")
+		expID, err := uuid.Parse(expIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid expense_id")
+		}
+		p, err := h.repo.GetPlan(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		field := getString(args, "field")
+		newValue := getFloat(args, "new_value")
+		for i, e := range p.Expenses {
+			if e.ID == expID {
+				switch field {
+				case "monthly_amount":
+					p.Expenses[i].MonthlyAmount = newValue
+				case "growth_rate":
+					p.Expenses[i].GrowthRate = newValue / 100
+				case "start_month":
+					p.Expenses[i].StartMonth = int(newValue)
+				case "end_month":
+					n := int(newValue)
+					p.Expenses[i].EndMonth = &n
+				}
+				if err := h.repo.UpdateExpense(ctx, p.Expenses[i]); err != nil {
+					return nil, err
+				}
+				return p.Expenses[i], nil
+			}
+		}
+		return nil, fmt.Errorf("expense not found")
+
+	case "modify_debt":
+		id := planID
+		if s, ok := args["plan_id"].(string); ok {
+			if p, err := uuid.Parse(s); err == nil {
+				id = p
+			}
+		}
+		debtIDStr := getString(args, "debt_id")
+		debtID, err := uuid.Parse(debtIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid debt_id")
+		}
+		p, err := h.repo.GetPlan(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		field := getString(args, "field")
+		newValue := getFloat(args, "new_value")
+		for i, d := range p.DebtAccounts {
+			if d.ID == debtID {
+				switch field {
+				case "balance":
+					p.DebtAccounts[i].Balance = newValue
+				case "interest_rate":
+					p.DebtAccounts[i].InterestRate = newValue / 100
+				case "min_payment":
+					p.DebtAccounts[i].MinPayment = newValue
+				case "extra_payment":
+					p.DebtAccounts[i].ExtraPayment = newValue
+				case "pslf_payments_made":
+					p.DebtAccounts[i].PSLFPaymentsMade = int(newValue)
+				case "repayment_plan":
+					// handled via new_string_value below
+				}
+				if sv := getString(args, "new_string_value"); sv != "" && field == "repayment_plan" {
+					p.DebtAccounts[i].RepaymentPlan = domain.RepaymentPlan(sv)
+				}
+				if err := h.repo.UpdateDebt(ctx, p.DebtAccounts[i]); err != nil {
+					return nil, err
+				}
+				return p.DebtAccounts[i], nil
+			}
+		}
+		return nil, fmt.Errorf("debt account not found")
+
+	case "modify_investment":
+		id := planID
+		if s, ok := args["plan_id"].(string); ok {
+			if p, err := uuid.Parse(s); err == nil {
+				id = p
+			}
+		}
+		invIDStr := getString(args, "investment_id")
+		invID, err := uuid.Parse(invIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid investment_id")
+		}
+		p, err := h.repo.GetPlan(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		field := getString(args, "field")
+		newValue := getFloat(args, "new_value")
+		for i, inv := range p.InvestmentAccounts {
+			if inv.ID == invID {
+				switch field {
+				case "monthly_contrib":
+					p.InvestmentAccounts[i].MonthlyContrib = newValue
+				case "balance":
+					p.InvestmentAccounts[i].Balance = newValue
+				case "employer_match":
+					p.InvestmentAccounts[i].EmployerMatch = newValue / 100
+				}
+				if err := h.repo.UpdateInvestment(ctx, p.InvestmentAccounts[i]); err != nil {
+					return nil, err
+				}
+				return p.InvestmentAccounts[i], nil
+			}
+		}
+		return nil, fmt.Errorf("investment account not found")
+
+	case "delete_income":
+		itemIDStr := getString(args, "stream_id")
+		itemID, err := uuid.Parse(itemIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid stream_id")
+		}
+		if err := h.repo.DeleteIncomeStream(ctx, itemID); err != nil {
+			return nil, err
+		}
+		return map[string]string{"message": "income stream deleted"}, nil
+
+	case "delete_expense":
+		itemIDStr := getString(args, "expense_id")
+		itemID, err := uuid.Parse(itemIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid expense_id")
+		}
+		if err := h.repo.DeleteExpense(ctx, itemID); err != nil {
+			return nil, err
+		}
+		return map[string]string{"message": "expense deleted"}, nil
+
+	case "delete_debt":
+		itemIDStr := getString(args, "debt_id")
+		itemID, err := uuid.Parse(itemIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid debt_id")
+		}
+		if err := h.repo.DeleteDebt(ctx, itemID); err != nil {
+			return nil, err
+		}
+		return map[string]string{"message": "debt account deleted"}, nil
+
+	case "delete_investment":
+		itemIDStr := getString(args, "investment_id")
+		itemID, err := uuid.Parse(itemIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid investment_id")
+		}
+		if err := h.repo.DeleteInvestment(ctx, itemID); err != nil {
+			return nil, err
+		}
+		return map[string]string{"message": "investment account deleted"}, nil
 
 	case "add_giving":
 		id := planID
@@ -568,6 +824,113 @@ func (h *AIHandler) executeTool(
 			return nil, err
 		}
 		return created, nil
+
+	case "set_cash_flow_constraint":
+		id := planID
+		if s, ok := args["plan_id"].(string); ok {
+			if p, err := uuid.Parse(s); err == nil {
+				id = p
+			}
+		}
+		p, err := h.repo.GetPlan(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		cfg := p.SimulationConfig
+		if v, ok := args["target_cash_flow"].(float64); ok {
+			cfg.TargetCashFlow = v
+		}
+		if v, ok := args["constrain_giving"].(bool); ok {
+			cfg.ConstrainGiving = v
+		}
+		if v, ok := args["constrain_savings"].(bool); ok {
+			cfg.ConstrainSavings = v
+		}
+		if v, ok := args["constrain_investments"].(bool); ok {
+			cfg.ConstrainInvestments = v
+		}
+		if err := h.repo.UpdateSimulationConfig(ctx, cfg); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"message":               "Cash flow constraint updated",
+			"target_cash_flow":      cfg.TargetCashFlow,
+			"constrain_giving":      cfg.ConstrainGiving,
+			"constrain_savings":     cfg.ConstrainSavings,
+			"constrain_investments": cfg.ConstrainInvestments,
+		}, nil
+
+	case "set_net_worth_ceiling":
+		id := planID
+		if s, ok := args["plan_id"].(string); ok {
+			if p, err := uuid.Parse(s); err == nil {
+				id = p
+			}
+		}
+		p, err := h.repo.GetPlan(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		cfg := p.SimulationConfig
+		if v, ok := args["enabled"].(bool); ok {
+			cfg.NetWorthCeilingEnabled = v
+		}
+		if v, ok := args["ceiling"].(float64); ok && v > 0 {
+			cfg.NetWorthCeiling = v
+		}
+		if err := h.repo.UpdateSimulationConfig(ctx, cfg); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"message": "Net worth ceiling updated",
+			"enabled": cfg.NetWorthCeilingEnabled,
+			"ceiling": cfg.NetWorthCeiling,
+		}, nil
+
+	case "add_child":
+		id := planID
+		if s, ok := args["plan_id"].(string); ok {
+			if p, err := uuid.Parse(s); err == nil {
+				id = p
+			}
+		}
+		pref := domain.ChildSchoolPref(getString(args, "school_preference"))
+		if pref == "" {
+			pref = domain.ChildSchoolPublic
+		}
+		child := domain.Child{
+			ID:                uuid.New(),
+			PlanID:            id,
+			Name:              getString(args, "name"),
+			BirthMonth:        int(getFloat(args, "birth_month")),
+			SchoolPreference:  pref,
+			IncludeActivities: true,
+			IncludeFirstCar:   true,
+		}
+		if v, ok := args["include_activities"].(bool); ok {
+			child.IncludeActivities = v
+		}
+		if v, ok := args["include_first_car"].(bool); ok {
+			child.IncludeFirstCar = v
+		}
+		if v, ok := args["college_account_id"].(string); ok && v != "" {
+			if cid, err := uuid.Parse(v); err == nil {
+				child.CollegeAccountID = &cid
+			}
+		}
+		created, err := h.repo.CreateChild(ctx, child)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"id":                 created.ID,
+			"name":               created.Name,
+			"birth_month":        created.BirthMonth,
+			"school_preference":  created.SchoolPreference,
+			"include_activities": created.IncludeActivities,
+			"include_first_car":  created.IncludeFirstCar,
+			"message":            fmt.Sprintf("Child '%s' added. Their estimated costs will be modeled from birth through college (~age 22), inflation-adjusted.", created.Name),
+		}, nil
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
@@ -791,10 +1154,97 @@ func solomonToolDefs() *genai.Tool {
 					Properties: map[string]*genai.Schema{
 						"plan_id":   str("UUID of the plan"),
 						"stream_id": str("UUID of the income stream to modify"),
-						"field":     str("Field to change: amount, growth_rate, start_month"),
-						"new_value": num("New value for the field"),
+						"field":     str("Field to change: amount, growth_rate, start_month, end_month"),
+						"new_value": num("New numeric value for the field"),
 					},
 					Required: []string{"stream_id", "field", "new_value"},
+				},
+			},
+			{
+				Name:        "modify_expense",
+				Description: "Modify a field on an existing expense.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"plan_id":    str("UUID of the plan"),
+						"expense_id": str("UUID of the expense to modify"),
+						"field":      str("Field to change: monthly_amount, growth_rate, start_month, end_month"),
+						"new_value":  num("New numeric value for the field"),
+					},
+					Required: []string{"expense_id", "field", "new_value"},
+				},
+			},
+			{
+				Name:        "modify_debt",
+				Description: "Modify a field on an existing debt account (e.g. correct a balance or change repayment plan).",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"plan_id":          str("UUID of the plan"),
+						"debt_id":          str("UUID of the debt account to modify"),
+						"field":            str("Field to change: balance, interest_rate, min_payment, extra_payment, pslf_payments_made, repayment_plan"),
+						"new_value":        num("New numeric value (use for all fields except repayment_plan)"),
+						"new_string_value": str("New string value (use only for repayment_plan field: standard, idr, paye, save, ibr_new)"),
+					},
+					Required: []string{"debt_id", "field"},
+				},
+			},
+			{
+				Name:        "modify_investment",
+				Description: "Modify a field on an existing investment account.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"plan_id":       str("UUID of the plan"),
+						"investment_id": str("UUID of the investment account to modify"),
+						"field":         str("Field to change: monthly_contrib, balance, employer_match"),
+						"new_value":     num("New numeric value for the field"),
+					},
+					Required: []string{"investment_id", "field", "new_value"},
+				},
+			},
+			{
+				Name:        "delete_income",
+				Description: "Delete an income stream from the plan.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"stream_id": str("UUID of the income stream to delete"),
+					},
+					Required: []string{"stream_id"},
+				},
+			},
+			{
+				Name:        "delete_expense",
+				Description: "Delete an expense from the plan.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"expense_id": str("UUID of the expense to delete"),
+					},
+					Required: []string{"expense_id"},
+				},
+			},
+			{
+				Name:        "delete_debt",
+				Description: "Delete a debt account from the plan.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"debt_id": str("UUID of the debt account to delete"),
+					},
+					Required: []string{"debt_id"},
+				},
+			},
+			{
+				Name:        "delete_investment",
+				Description: "Delete an investment account from the plan.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"investment_id": str("UUID of the investment account to delete"),
+					},
+					Required: []string{"investment_id"},
 				},
 			},
 			{
@@ -814,6 +1264,51 @@ func solomonToolDefs() *genai.Tool {
 					Required: []string{"name", "start_month"},
 				},
 			},
+			{
+				Name:        "set_cash_flow_constraint",
+				Description: "Configure the monthly cash flow constrainer. When enabled, any surplus cash flow above target_cash_flow is automatically redirected (to giving, savings, and/or investments based on which flags are enabled). Use this to model 'live on X/month and invest the rest' scenarios.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"plan_id":               str("UUID of the plan"),
+						"target_cash_flow":       num("Target monthly cash flow to retain (e.g. 3000 = keep $3k/mo, redirect surplus). Set to 0 to disable."),
+						"constrain_giving":       boo("Redirect surplus to giving targets proportionally"),
+						"constrain_savings":      boo("Redirect surplus to savings accounts proportionally"),
+						"constrain_investments":  boo("Redirect surplus to investment accounts proportionally"),
+					},
+					Required: []string{"target_cash_flow"},
+				},
+			},
+			{
+				Name:        "set_net_worth_ceiling",
+				Description: "Set a net worth ceiling (accumulation cap). When total net worth exceeds the ceiling, excess investment growth is automatically diverted to charitable giving. Use this to model 'I don't want to accumulate more than $X' scenarios.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"plan_id": str("UUID of the plan"),
+						"enabled": boo("Whether to enable the net worth ceiling"),
+						"ceiling": num("Maximum net worth in dollars (e.g. 10000000 for $10M). Excess above this is diverted to giving."),
+					},
+					Required: []string{"enabled"},
+				},
+			},
+			{
+				Name:        "add_child",
+				Description: "Add a child to the plan. The simulation will automatically model inflation-adjusted costs for that child from birth through college (~age 22): base childcare/living costs, optional activities/sports, optional first car at 16, and college expenses drawn from a linked 529 account if provided.",
+				Parameters: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"plan_id":            str("UUID of the plan"),
+						"name":               str("Child's name, e.g. 'Emma'"),
+						"birth_month":        num("Month index from plan start when the child is born (negative = already born, 0 = born at plan start). E.g. if plan starts July 2026 and child born March 2025, use -16."),
+						"school_preference":  str("School type: 'public' or 'private'. Private adds ~$1,100/mo during K-12 and higher college costs."),
+						"include_activities": boo("Include sports/activities/travel costs (~$100-375/mo depending on age). Default: true."),
+						"include_first_car":  boo("Include first car purchase (~$18k one-time at age 16) and teen insurance ($275/mo ages 16-18). Default: true."),
+						"college_account_id": str("UUID of a 529 investment account to draw college costs from. If set, college expenses are deducted from the 529 balance before charging to monthly expenses."),
+					},
+					Required: []string{"name", "birth_month"},
+				},
+			},
 		},
 	}
 }
@@ -821,19 +1316,57 @@ func solomonToolDefs() *genai.Tool {
 // ---- System prompt ----
 
 func buildSystemPrompt(planJSON string) string {
+	// Parse plan JSON to extract start date for concrete month indexing
+	var planObj struct {
+		SimulationConfig struct {
+			StartYear  int `json:"start_year"`
+			StartMonth int `json:"start_month"`
+		} `json:"simulation_config"`
+	}
+	_ = json.Unmarshal([]byte(planJSON), &planObj)
+	startYear := planObj.SimulationConfig.StartYear
+	startMonth := planObj.SimulationConfig.StartMonth
+	if startYear == 0 {
+		startYear = 2026
+	}
+	if startMonth == 0 {
+		startMonth = 7
+	}
+
+	// Build a small month reference table (every 12 months for 5 years)
+	monthNames := []string{"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"}
+	monthRef := "Month 0 = " + monthNames[startMonth-1] + " " + fmt.Sprintf("%d", startYear)
+	for _, y := range []int{12, 24, 36, 48, 60, 84, 120, 180, 240, 360} {
+		yr := startYear + (startMonth-1+y)/12
+		mo := (startMonth-1+y)%12
+		monthRef += fmt.Sprintf("; Month %d = %s %d", y, monthNames[mo], yr)
+	}
+
 	return `You are Solomon, an AI financial advisor embedded in a physician financial planning application.
 
 You help physicians model complex financial scenarios using tool calls. You have access to tools that can:
 - Fetch and simulate financial plans
 - Fork plans into alternative scenarios ("what if" branches)
-- Add expenses, debts, investment accounts, income streams, giving targets, and life events
+- Add expenses, debts, investment accounts, income streams, giving targets, life events, and children
+- Configure cash flow constraints (redirect surplus cash flow to giving/savings/investments)
+- Set a net worth ceiling (cap accumulation at a dollar amount, divert excess to giving)
+- Model child costs end-to-end (infant through college, with optional activities and 529 linkage)
 - Compare plans side by side with net worth deltas
+
+## Month Indexing (CRITICAL — use these exact mappings)
+` + monthRef + `
+Always compute months from these anchors. Never guess. When the user says "year 3 of residency", count forward from Month 0.
 
 ## CRITICAL: Tool Classification Rules
 - Giving / charitable giving / tithes / donations / church giving / charity / pledges → ALWAYS use add_giving. NEVER use add_expense for these.
 - Regular living expenses (housing, food, transport, healthcare, etc.) → use add_expense.
 - When in doubt whether something is "giving", ask yourself: is it charitable? If yes, use add_giving.
 - Emergency funds, down payment savings, college funds, vacation funds, or any named savings goal → use add_investment with type "savings" or "money_market", and set goal_target + goal_label so it appears in the Goals tracker.
+- "Live on X per month" / "redirect surplus" / "only keep Y cash flow" → use set_cash_flow_constraint with target_cash_flow=X and enable the appropriate constrain flags.
+- "Don't want to accumulate more than $X" / "cap my net worth" / "give away above $X" → use set_net_worth_ceiling.
+- Adding a child / modeling child costs / "we're having a baby" → use add_child. Never model child costs manually via add_expense.
+- Correcting a mistake / "actually it's X not Y" / "change the balance to" → use modify_* tools. NEVER add a duplicate entry.
+- "Remove", "delete", "get rid of" → use delete_* tools.
 
 ## Current Plan Data
 ` + "```json\n" + planJSON + "\n```" + `

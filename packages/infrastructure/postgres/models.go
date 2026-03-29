@@ -58,6 +58,7 @@ type PlanModel struct {
 	InvestmentAccounts []InvestmentAccountModel `gorm:"foreignKey:PlanID"`
 	LifeEvents         []LifeEventModel         `gorm:"foreignKey:PlanID"`
 	GivingTargets      []GivingTargetModel      `gorm:"foreignKey:PlanID"`
+	Children           []ChildModel             `gorm:"foreignKey:PlanID"`
 }
 
 func (PlanModel) TableName() string { return "plans" }
@@ -80,6 +81,14 @@ type SimulationConfigModel struct {
 	ConstrainGiving      bool    `gorm:"not null;default:false"`
 	ConstrainSavings     bool    `gorm:"not null;default:false"`
 	ConstrainInvestments bool    `gorm:"not null;default:false"`
+
+	// Net worth ceiling constrainer
+	NetWorthCeilingEnabled bool    `gorm:"not null;default:false"`
+	NetWorthCeiling        float64 `gorm:"not null;default:0"`
+
+	// Tax / IDR inputs
+	FilingStatus  string `gorm:"not null;default:'mfj'"`
+	HouseholdSize int    `gorm:"not null;default:2"`
 }
 
 func (SimulationConfigModel) TableName() string { return "simulation_configs" }
@@ -149,6 +158,7 @@ type InvestmentAccountModel struct {
 	MonthlyContrib   float64        `gorm:"not null;default:0"`
 	ContribBasis     string         `gorm:"not null;default:'fixed'"`
 	ContribPercent   float64        `gorm:"not null;default:0"`
+	OverflowPct      float64        `gorm:"not null;default:0"`
 	EmployerMatch    float64        `gorm:"default:0"`
 	EmployerMatchCap float64        `gorm:"default:0"`
 	AssetAllocation  datatypes.JSON `gorm:"type:jsonb;not null"`
@@ -165,6 +175,7 @@ type GivingTargetModel struct {
 	Name        string    `gorm:"not null"`
 	Basis       string    `gorm:"not null;default:'gross'"`
 	Percentage  float64   `gorm:"not null;default:0.10"`
+	OverflowPct float64   `gorm:"not null;default:0"`
 	FixedAmount *float64
 	StartMonth  int  `gorm:"not null;default:0"`
 	EndMonth    *int
@@ -196,3 +207,18 @@ type EventImpactModel struct {
 }
 
 func (EventImpactModel) TableName() string { return "event_impacts" }
+
+// ---- Children ----
+
+type ChildModel struct {
+	ID                uuid.UUID  `gorm:"type:uuid;primaryKey"`
+	PlanID            uuid.UUID  `gorm:"type:uuid;not null;index"`
+	Name              string     `gorm:"not null"`
+	BirthMonth        int        `gorm:"not null;default:0"`
+	SchoolPreference  string     `gorm:"not null;default:'public'"`
+	CollegeAccountID  *uuid.UUID `gorm:"type:uuid"`
+	IncludeActivities bool       `gorm:"not null;default:true"`
+	IncludeFirstCar   bool       `gorm:"not null;default:true"`
+}
+
+func (ChildModel) TableName() string { return "children" }

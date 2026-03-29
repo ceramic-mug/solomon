@@ -39,6 +39,9 @@ func planToDomain(m PlanModel) domain.Plan {
 	for _, g := range m.GivingTargets {
 		p.GivingTargets = append(p.GivingTargets, givingToDomain(g))
 	}
+	for _, ch := range m.Children {
+		p.Children = append(p.Children, childToDomain(ch))
+	}
 	return p
 }
 
@@ -69,30 +72,46 @@ func simConfigToDomain(m SimulationConfigModel) domain.SimulationConfig {
 		StockStdDev:      m.StockStdDev,
 		BondMeanReturn:   m.BondMeanReturn,
 		BondStdDev:       m.BondStdDev,
-		TargetCashFlow:   m.TargetCashFlow,
-		ConstrainGiving:  m.ConstrainGiving,
-		ConstrainSavings: m.ConstrainSavings,
-		ConstrainInvestments: m.ConstrainInvestments,
+		TargetCashFlow:         m.TargetCashFlow,
+		ConstrainGiving:        m.ConstrainGiving,
+		ConstrainSavings:       m.ConstrainSavings,
+		ConstrainInvestments:   m.ConstrainInvestments,
+		NetWorthCeilingEnabled: m.NetWorthCeilingEnabled,
+		NetWorthCeiling:        m.NetWorthCeiling,
+		FilingStatus:           m.FilingStatus,
+		HouseholdSize:          m.HouseholdSize,
 	}
 }
 
 func simConfigToModel(c domain.SimulationConfig) SimulationConfigModel {
+	fs := c.FilingStatus
+	if fs == "" {
+		fs = "mfj"
+	}
+	hs := c.HouseholdSize
+	if hs == 0 {
+		hs = 2
+	}
 	return SimulationConfigModel{
-		ID:               c.ID,
-		PlanID:           c.PlanID,
-		StartYear:        c.StartYear,
-		StartMonth:       c.StartMonth,
-		HorizonYears:     c.HorizonYears,
-		InflationRate:    c.InflationRate,
-		MonteCarloPasses: c.MonteCarloPasses,
-		StockMeanReturn:  c.StockMeanReturn,
-		StockStdDev:      c.StockStdDev,
-		BondMeanReturn:   c.BondMeanReturn,
-		BondStdDev:       c.BondStdDev,
-		TargetCashFlow:   c.TargetCashFlow,
-		ConstrainGiving:  c.ConstrainGiving,
-		ConstrainSavings: c.ConstrainSavings,
-		ConstrainInvestments: c.ConstrainInvestments,
+		ID:                     c.ID,
+		PlanID:                 c.PlanID,
+		StartYear:              c.StartYear,
+		StartMonth:             c.StartMonth,
+		HorizonYears:           c.HorizonYears,
+		InflationRate:          c.InflationRate,
+		MonteCarloPasses:       c.MonteCarloPasses,
+		StockMeanReturn:        c.StockMeanReturn,
+		StockStdDev:            c.StockStdDev,
+		BondMeanReturn:         c.BondMeanReturn,
+		BondStdDev:             c.BondStdDev,
+		TargetCashFlow:         c.TargetCashFlow,
+		ConstrainGiving:        c.ConstrainGiving,
+		ConstrainSavings:       c.ConstrainSavings,
+		ConstrainInvestments:   c.ConstrainInvestments,
+		NetWorthCeilingEnabled: c.NetWorthCeilingEnabled,
+		NetWorthCeiling:        c.NetWorthCeiling,
+		FilingStatus:           fs,
+		HouseholdSize:          hs,
 	}
 }
 
@@ -212,6 +231,7 @@ func investmentToDomain(m InvestmentAccountModel) domain.InvestmentAccount {
 		MonthlyContrib:   m.MonthlyContrib,
 		ContribBasis:     domain.ContribBasis(m.ContribBasis),
 		ContribPercent:   m.ContribPercent,
+		OverflowPct:      m.OverflowPct,
 		EmployerMatch:    m.EmployerMatch,
 		EmployerMatchCap: m.EmployerMatchCap,
 		AssetAllocation:  alloc,
@@ -232,6 +252,7 @@ func investmentToModel(inv domain.InvestmentAccount) InvestmentAccountModel {
 		MonthlyContrib:   inv.MonthlyContrib,
 		ContribBasis:     string(inv.ContribBasis),
 		ContribPercent:   inv.ContribPercent,
+		OverflowPct:      inv.OverflowPct,
 		EmployerMatch:    inv.EmployerMatch,
 		EmployerMatchCap: inv.EmployerMatchCap,
 		AssetAllocation:  allocJSON,
@@ -250,6 +271,7 @@ func givingToDomain(m GivingTargetModel) domain.GivingTarget {
 		Name:        m.Name,
 		Basis:       domain.GivingBasis(m.Basis),
 		Percentage:  m.Percentage,
+		OverflowPct: m.OverflowPct,
 		FixedAmount: m.FixedAmount,
 		StartMonth:  m.StartMonth,
 		EndMonth:    m.EndMonth,
@@ -263,9 +285,38 @@ func givingToModel(g domain.GivingTarget) GivingTargetModel {
 		Name:        g.Name,
 		Basis:       string(g.Basis),
 		Percentage:  g.Percentage,
+		OverflowPct: g.OverflowPct,
 		FixedAmount: g.FixedAmount,
 		StartMonth:  g.StartMonth,
 		EndMonth:    g.EndMonth,
+	}
+}
+
+// ---- Children ----
+
+func childToDomain(m ChildModel) domain.Child {
+	return domain.Child{
+		ID:                m.ID,
+		PlanID:            m.PlanID,
+		Name:              m.Name,
+		BirthMonth:        m.BirthMonth,
+		SchoolPreference:  domain.ChildSchoolPref(m.SchoolPreference),
+		CollegeAccountID:  m.CollegeAccountID,
+		IncludeActivities: m.IncludeActivities,
+		IncludeFirstCar:   m.IncludeFirstCar,
+	}
+}
+
+func childToModel(c domain.Child) ChildModel {
+	return ChildModel{
+		ID:                c.ID,
+		PlanID:            c.PlanID,
+		Name:              c.Name,
+		BirthMonth:        c.BirthMonth,
+		SchoolPreference:  string(c.SchoolPreference),
+		CollegeAccountID:  c.CollegeAccountID,
+		IncludeActivities: c.IncludeActivities,
+		IncludeFirstCar:   c.IncludeFirstCar,
 	}
 }
 

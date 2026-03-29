@@ -13,12 +13,14 @@ type MonthSnapshot struct {
 	TotalExpenses      float64 `json:"total_expenses"`      // sum of all expense categories
 	TotalDebtPayments  float64 `json:"total_debt_payments"` // principal + interest paid
 	TotalInterestPaid  float64 `json:"total_interest_paid"` // interest portion only
-	TotalGiving        float64 `json:"total_giving"`        // charitable giving this month
-	TotalInvestContrib float64 `json:"total_invest_contrib"` // contributions this month
-	CashFlow           float64 `json:"cash_flow"`           // net_income - expenses - debt - giving - investing
-	TotalDebt          float64 `json:"total_debt"`          // remaining debt balance
-	TotalInvestments   float64 `json:"total_investments"`   // total investment account value
-	NetWorth           float64 `json:"net_worth"`           // investments - debt (+ any other assets)
+	TotalGiving             float64 `json:"total_giving"`              // charitable giving this month (income-flow + ceiling-diverted)
+	TotalInvestContrib      float64 `json:"total_invest_contrib"`      // contributions this month
+	CashFlow                float64 `json:"cash_flow"`                 // net_income - expenses - debt - giving - investing
+	TotalDebt               float64 `json:"total_debt"`                // remaining debt balance
+	TotalInvestments        float64 `json:"total_investments"`         // total investment account value
+	NetWorth                float64 `json:"net_worth"`                 // investments - debt (+ any other assets)
+	AccumulatedGiving       float64 `json:"accumulated_giving"`        // cumulative giving from plan start through this month
+	CeilingDivertedToGiving float64 `json:"ceiling_diverted_to_giving,omitempty"` // giving triggered by net worth ceiling this month
 
 	// Per-account breakdowns (optional detail)
 	DebtBalances       map[string]float64 `json:"debt_balances,omitempty"`

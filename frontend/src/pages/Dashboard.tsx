@@ -10,6 +10,7 @@ import AnnualSummaryTable from '../components/charts/AnnualSummaryTable'
 import ComparisonPanel from '../components/charts/ComparisonPanel'
 import RepaymentComparisonPanel from '../components/charts/RepaymentComparisonPanel'
 import SavingsBreakdownChart from '../components/charts/SavingsBreakdownChart'
+import NetWorthChart from '../components/charts/NetWorthChart'
 import DebtFreedomPanel from '../components/panels/DebtFreedomPanel'
 import GoalsPanel from '../components/panels/GoalsPanel'
 import SensitivityPanel from '../components/panels/SensitivityPanel'
@@ -19,9 +20,9 @@ import type { Plan, MonthSnapshot, SimulationConfig } from '../api/types'
 import {
   Plus, GitBranch, TrendingUp, DollarSign, CreditCard, Landmark,
   MessageSquare, CalendarRange, Heart, Wallet, Calendar, RefreshCw, Lock, X,
-  ShieldCheck, Zap, Settings2, HelpCircle, Sparkles, ChevronRight
+  ShieldCheck, Baby, Settings2, Sparkles
 } from 'lucide-react'
-import { IncomeTab, ExpensesTab, DebtsTab, InvestmentsTab, EventsTab, GivingTab } from '../components/forms/PlanComponents'
+import { IncomeTab, ExpensesTab, DebtsTab, InvestmentsTab, EventsTab, GivingTab, ChildrenTab } from '../components/forms/PlanComponents'
 
 const EMPTY_PLANS: Plan[] = []
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -86,7 +87,7 @@ function StatCard({ label, value, sub, icon, accent = 'default', dimmed }: StatC
   )
 }
 
-type TabType = 'income' | 'expenses' | 'debts' | 'investments' | 'events' | 'giving'
+type TabType = 'income' | 'expenses' | 'debts' | 'investments' | 'events' | 'giving' | 'children'
 
 function TabContent({ tab, plan }: { tab: TabType; plan: Plan }) {
   switch (tab) {
@@ -96,48 +97,81 @@ function TabContent({ tab, plan }: { tab: TabType; plan: Plan }) {
     case 'investments': return <InvestmentsTab plan={plan} />
     case 'events':      return <EventsTab plan={plan} />
     case 'giving':      return <GivingTab plan={plan} />
+    case 'children':    return <ChildrenTab plan={plan} />
     default:            return null
   }
 }
 
 function TargetCashFlowInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  // Convert legacy values (> 1.0) into a sensible default percentage like 10%
-  const initialPercent = value > 1.0 ? 10 : Math.round(value * 100)
-  const [local, setLocal] = useState(initialPercent)
-  
+  // value > 1.0 → dollar mode; 0 < value <= 1.0 → percent mode
+  const isDollar = value > 1.0
+  const [mode, setMode] = useState<'dollar' | 'percent'>(isDollar ? 'dollar' : 'percent')
+  const [dollarVal, setDollarVal] = useState(isDollar ? Math.round(value) : 500)
+  const [percentVal, setPercentVal] = useState(isDollar ? 10 : Math.round(value * 100))
+
   useEffect(() => {
-    setLocal(value > 1.0 ? 10 : Math.round(value * 100))
+    if (value > 1.0) { setMode('dollar'); setDollarVal(Math.round(value)) }
+    else if (value > 0) { setMode('percent'); setPercentVal(Math.round(value * 100)) }
   }, [value])
 
-  const handleSave = (val: number) => {
-    // Save as a decimal (0.0 to 1.0) to the backend
-    onChange(val / 100)
+  const save = () => {
+    onChange(mode === 'dollar' ? dollarVal : percentVal / 100)
   }
 
   return (
     <div className="pt-2 space-y-3">
-      <div className="flex items-center gap-2">
-        <input 
-          type="number" 
-          value={local} 
-          min="0"
-          max="100"
-          onChange={e => setLocal(parseInt(e.target.value) || 0)} 
-          onBlur={() => handleSave(local)}
-          onKeyDown={e => e.key === 'Enter' && handleSave(local)}
-          className="input flex-1 bg-gray-900 border-gray-700 text-sm font-mono text-center" 
-        />
-        <span className="text-gray-400 text-xs font-semibold">% of Net</span>
-        <button onClick={() => handleSave(local)} className="btn-secondary px-2 py-1 text-xs whitespace-nowrap">Save</button>
+      <div className="flex rounded-md overflow-hidden border border-gray-700 text-xs">
+        <button
+          onClick={() => setMode('dollar')}
+          className={`flex-1 py-1 transition-colors ${mode === 'dollar' ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+        >$ Fixed amount</button>
+        <button
+          onClick={() => setMode('percent')}
+          className={`flex-1 py-1 transition-colors ${mode === 'percent' ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+        >% Of net income</button>
       </div>
-      <input 
-        type="range" min="0" max="100" step="1" 
-        value={local} 
-        onChange={e => setLocal(parseInt(e.target.value) || 0)} 
-        onMouseUp={() => handleSave(local)}
-        onTouchEnd={() => handleSave(local)}
-        className="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500" 
-      />
+      {mode === 'dollar' ? (
+        <div className="flex items-center gap-2">
+          <span className="text-gray-400 text-xs">$</span>
+          <input
+            type="number"
+            value={dollarVal}
+            min="0"
+            step="100"
+            onChange={e => setDollarVal(parseFloat(e.target.value) || 0)}
+            onBlur={save}
+            onKeyDown={e => e.key === 'Enter' && save()}
+            className="input flex-1 bg-gray-900 border-gray-700 text-sm font-mono"
+          />
+          <span className="text-gray-400 text-xs">/mo</span>
+          <button onClick={save} className="btn-secondary px-2 py-1 text-xs whitespace-nowrap">Save</button>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              value={percentVal}
+              min="0"
+              max="100"
+              onChange={e => setPercentVal(parseInt(e.target.value) || 0)}
+              onBlur={save}
+              onKeyDown={e => e.key === 'Enter' && save()}
+              className="input flex-1 bg-gray-900 border-gray-700 text-sm font-mono text-center"
+            />
+            <span className="text-gray-400 text-xs font-semibold">% of Net</span>
+            <button onClick={save} className="btn-secondary px-2 py-1 text-xs whitespace-nowrap">Save</button>
+          </div>
+          <input
+            type="range" min="0" max="100" step="1"
+            value={percentVal}
+            onChange={e => setPercentVal(parseInt(e.target.value) || 0)}
+            onMouseUp={save}
+            onTouchEnd={save}
+            className="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+          />
+        </>
+      )}
     </div>
   )
 }
@@ -150,24 +184,28 @@ function OverflowAllocator({ plan }: { plan: Plan }) {
   const invs = plan.investment_accounts ?? []
   const givs = plan.giving_targets ?? []
 
-  const invRemainders = invs.filter(a => a.contrib_basis === 'remainder')
-  const givRemainders = givs.filter(g => g.basis === 'remainder')
-  
-  const totalAllocated = invRemainders.reduce((s, a) => s + a.contrib_percent, 0) + givRemainders.reduce((s, g) => s + g.percentage, 0)
+  // Active overflow participants: accounts with overflow_pct > 0 (additive) OR legacy remainder basis
+  const invOverflow = invs.filter(a => (a.overflow_pct ?? 0) > 0 || a.contrib_basis === 'remainder')
+  const givOverflow = givs.filter(g => (g.overflow_pct ?? 0) > 0 || g.basis === 'remainder')
+
+  const getInvPct = (a: typeof invs[0]) => a.contrib_basis === 'remainder' ? a.contrib_percent : (a.overflow_pct ?? 0)
+  const getGivPct = (g: typeof givs[0]) => g.basis === 'remainder' ? g.percentage : (g.overflow_pct ?? 0)
+
+  const totalAllocated = invOverflow.reduce((s, a) => s + getInvPct(a), 0)
+                       + givOverflow.reduce((s, g) => s + getGivPct(g), 0)
   const isOver = totalAllocated > 1.0
 
   const handleAdd = async () => {
     if (!selectedId) return
-    
-    // Check if it's an investment
     const inv = invs.find(x => x.id === selectedId)
     if (inv) {
-      await updateInvestment(plan.id, inv.id, { ...inv, monthly_contrib: 0, contrib_basis: 'remainder', contrib_percent: percent / 100 })
+      // Set overflow_pct without touching contrib_basis — keeps baseline intact
+      await updateInvestment(plan.id, inv.id, { ...inv, overflow_pct: percent / 100 })
     } else {
-      // Check if it's giving
       const giv = givs.find(x => x.id === selectedId)
       if (giv) {
-        await updateGiving(plan.id, giv.id, { ...giv, basis: 'remainder', percentage: percent / 100 })
+        // Set overflow_pct without touching basis — keeps tithe/baseline intact
+        await updateGiving(plan.id, giv.id, { ...giv, overflow_pct: percent / 100 })
       }
     }
     qc.invalidateQueries({ queryKey: ['plan', plan.id] })
@@ -178,18 +216,28 @@ function OverflowAllocator({ plan }: { plan: Plan }) {
   const handleRemove = async (type: 'inv' | 'giv', id: string) => {
     if (type === 'inv') {
       const inv = invs.find(x => x.id === id)!
-      await updateInvestment(plan.id, inv.id, { ...inv, contrib_basis: 'fixed', monthly_contrib: 0, contrib_percent: 0 })
+      if (inv.contrib_basis === 'remainder') {
+        // Legacy: reset the whole thing
+        await updateInvestment(plan.id, inv.id, { ...inv, contrib_basis: 'fixed', monthly_contrib: 0, contrib_percent: 0, overflow_pct: 0 })
+      } else {
+        await updateInvestment(plan.id, inv.id, { ...inv, overflow_pct: 0 })
+      }
     } else {
       const giv = givs.find(x => x.id === id)!
-      await updateGiving(plan.id, giv.id, { ...giv, basis: 'gross', percentage: 0 })
+      if (giv.basis === 'remainder') {
+        // Legacy: reset
+        await updateGiving(plan.id, giv.id, { ...giv, basis: 'gross', percentage: 0, overflow_pct: 0 })
+      } else {
+        await updateGiving(plan.id, giv.id, { ...giv, overflow_pct: 0 })
+      }
     }
     qc.invalidateQueries({ queryKey: ['plan', plan.id] })
     qc.invalidateQueries({ queryKey: ['simulate', plan.id] })
   }
 
-  // Filter out those already in remainder
-  const availInvs = invs.filter(a => a.contrib_basis !== 'remainder')
-  const availGivs = givs.filter(g => g.basis !== 'remainder')
+  // All accounts are available (can be overflow targets regardless of basis)
+  const availInvs = invs.filter(a => (a.overflow_pct ?? 0) === 0 && a.contrib_basis !== 'remainder')
+  const availGivs = givs.filter(g => (g.overflow_pct ?? 0) === 0 && g.basis !== 'remainder')
 
   return (
     <div className="mt-6 pt-5 border-t border-gray-800/60">
@@ -199,33 +247,45 @@ function OverflowAllocator({ plan }: { plan: Plan }) {
           Total: {(totalAllocated * 100).toFixed(0)}%
         </span>
       </div>
-      
+
       {/* Visual Stacked Bar */}
       <div className="w-full h-1.5 bg-gray-900 rounded-full overflow-hidden mb-4 flex">
-        {invRemainders.map(a => <div key={a.id} style={{ width: `${a.contrib_percent * 100}%` }} className="h-full bg-emerald-500 hover:bg-emerald-400 transition-colors" title={a.name} />)}
-        {givRemainders.map(g => <div key={g.id} style={{ width: `${g.percentage * 100}%` }} className="h-full bg-amber-500 hover:bg-amber-400 transition-colors" title={g.name} />)}
+        {invOverflow.map(a => <div key={a.id} style={{ width: `${getInvPct(a) * 100}%` }} className="h-full bg-emerald-500 hover:bg-emerald-400 transition-colors" title={a.name} />)}
+        {givOverflow.map(g => <div key={g.id} style={{ width: `${getGivPct(g) * 100}%` }} className="h-full bg-amber-500 hover:bg-amber-400 transition-colors" title={g.name} />)}
       </div>
-      
-      {invRemainders.length === 0 && givRemainders.length === 0 ? (
+
+      {invOverflow.length === 0 && givOverflow.length === 0 ? (
         <p className="text-[11px] text-gray-500 mb-4 bg-black/20 p-2 rounded">
-          Any remaining cash flow above your ${plan.simulation_config.target_cash_flow.toLocaleString()} target is currently unallocated and will accumulate as raw cash.
+          Any remaining cash flow above your target is currently unallocated and will accumulate as raw cash.
         </p>
       ) : (
         <div className="space-y-2 mb-4">
-          {invRemainders.map(a => (
+          {invOverflow.map(a => (
             <div key={a.id} className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-gray-800">
-              <span className="text-gray-300 flex items-center gap-2"><Landmark size={12}/> {a.name}</span>
-              <div className="flex items-center gap-3">
-                <span className="font-mono text-emerald-400">{(a.contrib_percent * 100).toFixed(0)}%</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <Landmark size={12} className="shrink-0 text-emerald-500/70" />
+                <span className="text-gray-300 truncate">{a.name}</span>
+                {a.contrib_basis !== 'remainder' && (
+                  <span className="text-[10px] text-gray-600 shrink-0">+ baseline</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="font-mono text-emerald-400">{(getInvPct(a) * 100).toFixed(0)}%</span>
                 <button onClick={() => handleRemove('inv', a.id)} className="text-gray-600 hover:text-red-400"><X size={12} /></button>
               </div>
             </div>
           ))}
-          {givRemainders.map(g => (
+          {givOverflow.map(g => (
             <div key={g.id} className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-gray-800">
-              <span className="text-gray-300 flex items-center gap-2"><Heart size={12}/> {g.name}</span>
-              <div className="flex items-center gap-3">
-                <span className="font-mono text-amber-400">{(g.percentage * 100).toFixed(0)}%</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <Heart size={12} className="shrink-0 text-amber-500/70" />
+                <span className="text-gray-300 truncate">{g.name}</span>
+                {g.basis !== 'remainder' && (
+                  <span className="text-[10px] text-gray-600 shrink-0">+ baseline</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="font-mono text-amber-400">{(getGivPct(g) * 100).toFixed(0)}%</span>
                 <button onClick={() => handleRemove('giv', g.id)} className="text-gray-600 hover:text-red-400"><X size={12} /></button>
               </div>
             </div>
@@ -253,7 +313,7 @@ function OverflowAllocator({ plan }: { plan: Plan }) {
   )
 }
 
-type ChartView = 'overview' | 'debt' | 'cashflow' | 'savings' | 'table' | 'repayment' | 'comparison'
+type ChartView = 'overview' | 'debt' | 'cashflow' | 'savings' | 'table' | 'repayment' | 'comparison' | 'montecarlo'
 
 export default function Dashboard() {
   const qc = useQueryClient()
@@ -294,7 +354,10 @@ export default function Dashboard() {
 
   const { data: simResult, isFetching: simFetching, refetch: refetchSim } = useQuery({
     queryKey: ['simulate', activePlan_id],
-    queryFn: () => simulate(activePlan_id!, { filing_status: 'mfj', household_size: 2 }),
+    queryFn: () => {
+      const cfg = plans.find(p => p.id === activePlan_id)?.simulation_config
+      return simulate(activePlan_id!, { filing_status: cfg?.filing_status || 'mfj', household_size: cfg?.household_size || 2 })
+    },
     enabled: !!activePlan_id,
   })
 
@@ -306,7 +369,10 @@ export default function Dashboard() {
 
   const { data: repaymentData } = useQuery({
     queryKey: ['repayment', activePlan_id],
-    queryFn: () => compareRepayment(activePlan_id!, { filing_status: 'mfj', household_size: 2 }),
+    queryFn: () => {
+      const cfg = plans.find(p => p.id === activePlan_id)?.simulation_config
+      return compareRepayment(activePlan_id!, { filing_status: cfg?.filing_status || 'mfj', household_size: cfg?.household_size || 2 })
+    },
     enabled: !!activePlan_id && chartView === 'repayment',
   })
 
@@ -330,6 +396,7 @@ export default function Dashboard() {
       setActivePlan(plan.id)
       setShowCreate(false)
       setNewName('')
+      setShowWizard(true)
     },
   })
 
@@ -374,6 +441,7 @@ export default function Dashboard() {
       totalDebt:     last.total_debt,
       totalInvestments: last.total_investments,
       netWorth:      last.net_worth,
+      accumulatedGiving: last.accumulated_giving ?? 0,
       pslfCount: (pslfSnap && activeYear >= pslfSnap.year)
         ? 120
         : Math.min(last.pslf_qualifying_payments ?? 0, 120),
@@ -389,12 +457,13 @@ export default function Dashboard() {
   }
 
   const tabs: { key: TabType; label: string; icon: React.ReactNode }[] = [
-    { key: 'income',      label: 'Income',   icon: <DollarSign size={13} /> },
-    { key: 'expenses',    label: 'Expenses', icon: <CreditCard size={13} /> },
-    { key: 'debts',       label: 'Debt',     icon: <CreditCard size={13} /> },
-    { key: 'investments', label: 'Invest',   icon: <Landmark size={13} /> },
-    { key: 'events',      label: 'Events',   icon: <CalendarRange size={13} /> },
-    { key: 'giving',      label: 'Giving',   icon: <Heart size={13} /> },
+    { key: 'income',      label: 'Income',    icon: <DollarSign size={13} /> },
+    { key: 'expenses',    label: 'Expenses',  icon: <CreditCard size={13} /> },
+    { key: 'debts',       label: 'Debt',      icon: <CreditCard size={13} /> },
+    { key: 'investments', label: 'Invest',    icon: <Landmark size={13} /> },
+    { key: 'events',      label: 'Events',    icon: <CalendarRange size={13} /> },
+    { key: 'giving',      label: 'Giving',    icon: <Heart size={13} /> },
+    { key: 'children',    label: 'Children',  icon: <Baby size={13} /> },
   ]
 
   const allChartViews: { key: ChartView; label: string; show: boolean }[] = [
@@ -404,7 +473,8 @@ export default function Dashboard() {
     { key: 'savings',    label: 'Savings',         show: hasInvestments },
     { key: 'table',      label: 'Annual Summary',  show: true },
     { key: 'repayment',  label: 'Repayment',       show: hasStudentLoans },
-    { key: 'comparison', label: 'vs. Plan',        show: multiPlan },
+    { key: 'comparison',  label: 'vs. Plan',        show: multiPlan },
+    { key: 'montecarlo',  label: 'Monte Carlo',     show: (activePlan?.simulation_config.monte_carlo_passes ?? 0) > 0 },
   ]
   const chartViews = allChartViews.filter(v => v.show)
   const validView = chartViews.some(v => v.key === chartView) ? chartView : 'overview'
@@ -469,16 +539,19 @@ export default function Dashboard() {
       )}
 
       {plans.length === 0 ? (
-        <div className="card flex flex-col items-center justify-center py-16 text-center">
-          <div className="w-16 h-16 bg-blue-900/30 rounded-full flex items-center justify-center mb-4">
-            <TrendingUp size={32} className="text-blue-400" />
+        <div className="card flex flex-col items-center justify-center py-20 text-center">
+          <div className="w-20 h-20 bg-blue-900/20 rounded-full flex items-center justify-center mb-5 border border-blue-900/30">
+            <Sparkles size={36} className="text-blue-400" />
           </div>
-          <h2 className="text-lg font-semibold text-white mb-2">No plans yet</h2>
-          <p className="text-gray-500 text-sm mb-6 max-w-sm">
-            Create your first financial plan to start modeling your future.
+          <h2 className="text-xl font-semibold text-white mb-2">Welcome to Solomon</h2>
+          <p className="text-gray-500 text-sm mb-2 max-w-sm leading-relaxed">
+            Your personal financial planning workspace. Model income, debts, investments, and life events across time.
           </p>
-          <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
-            <Plus size={16} /> Create your first plan
+          <p className="text-gray-600 text-xs mb-8 max-w-xs">
+            The AI builder will walk you through your situation and build your first plan automatically.
+          </p>
+          <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2 px-6 py-2.5 text-sm">
+            <Sparkles size={15} /> Build my first plan
           </button>
         </div>
       ) : (
@@ -568,7 +641,7 @@ export default function Dashboard() {
 
               {/* Stat strip */}
               {firstSnap && (
-                <div className={`grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 transition-all ${isTimeTravel ? 'ring-1 ring-gray-700/50 rounded-xl p-1 -m-1' : ''}`}>
+                <div className={`grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 transition-all ${isTimeTravel ? 'ring-1 ring-gray-700/50 rounded-xl p-1 -m-1' : ''}`}>
                   <StatCard
                     label={isTimeTravel ? `Annual Net Income (${activeYear})` : 'Monthly Net Income'}
                     value={isTimeTravel ? fmt(annualForYear?.netIncome) : fmt(firstSnap.net_income)}
@@ -622,11 +695,20 @@ export default function Dashboard() {
                     icon={<Landmark size={14} />}
                     accent="green"
                   />
+                  <StatCard
+                    label={isTimeTravel ? `Giving (thru ${activeYear})` : 'Accumulated Giving (30yr)'}
+                    value={fmtShort(isTimeTravel ? annualForYear?.accumulatedGiving : lastSnap?.accumulated_giving)}
+                    sub={isTimeTravel ? undefined : 'Lifetime charitable total'}
+                    icon={<Heart size={14} />}
+                    accent="teal"
+                  />
                 </div>
               )}
 
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
                 <div className="lg:col-span-8 space-y-5">
+                  <SimpleAgent planId={activePlan.id} />
+
                   {/* Chart section */}
                   <div className="card">
                     <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -643,7 +725,13 @@ export default function Dashboard() {
                     </div>
 
                     {!simResult ? (
-                      <div className="h-72 flex items-center justify-center text-gray-600 text-sm">Add data to simulate</div>
+                      <div className="h-72 flex flex-col items-center justify-center gap-3 text-center">
+                        <TrendingUp size={28} className="text-gray-700" />
+                        <p className="text-gray-600 text-sm">Add income, expenses, or debts to run a simulation</p>
+                        <button onClick={() => setShowWizard(true)} className="btn-secondary text-xs flex items-center gap-1.5">
+                          <Sparkles size={12} /> Use AI builder
+                        </button>
+                      </div>
                     ) : (
                       <>
                         {validView === 'overview' && (
@@ -673,6 +761,13 @@ export default function Dashboard() {
                             </select>
                             {comparePlanId && comparisonData ? <ComparisonPanel deltas={comparisonData.full_deltas} planAName={activePlan.name} planBName={comparePlan?.name ?? 'Plan B'} /> : <div className="h-48 flex items-center justify-center text-gray-600 text-sm">Select a plan</div>}
                           </div>
+                        )}
+                        {validView === 'montecarlo' && (
+                          simResult?.monte_carlo
+                            ? <NetWorthChart snapshots={snapshots} monteCarlo={simResult.monte_carlo} showMonteCarlo height={300} />
+                            : <div className="h-48 flex flex-col items-center justify-center gap-2 text-gray-600 text-sm">
+                                <p>No Monte Carlo data — set passes &gt; 0 in plan settings</p>
+                              </div>
                         )}
                       </>
                     )}
@@ -714,8 +809,60 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  <SimpleAgent planId={activePlan.id} />
-                  {simResult && <SensitivityPanel planId={activePlan.id} simParams={{ filing_status: 'mfj', household_size: 2 }} onResult={snaps => { setWhatIfSnapshots(snaps); if (snaps && validView !== 'overview') setChartView('overview') }} />}
+                  {/* Net Worth Ceiling Constrainer */}
+                  <div className="card border-teal-900/20 bg-teal-900/5">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <Heart size={18} className="text-teal-400" />
+                        <h3 className="font-semibold text-white text-sm">Net Worth Ceiling</h3>
+                      </div>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <span className="text-xs text-gray-500">
+                          {activePlan.simulation_config.net_worth_ceiling_enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={activePlan.simulation_config.net_worth_ceiling_enabled ?? false}
+                          onChange={e => updateConfigMutation.mutate({ net_worth_ceiling_enabled: e.target.checked })}
+                          className="w-4 h-4 rounded border-gray-600 bg-gray-800 accent-teal-500"
+                        />
+                      </label>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1">
+                          <label className="block text-xs text-gray-400 mb-1">Ceiling ($)</label>
+                          <input
+                            type="number"
+                            className="input w-full bg-gray-900 border-gray-700 text-sm font-mono"
+                            value={activePlan.simulation_config.net_worth_ceiling || ''}
+                            placeholder="e.g. 10000000"
+                            step={500000}
+                            min={0}
+                            onChange={e => updateConfigMutation.mutate({ net_worth_ceiling: parseFloat(e.target.value) || 0 })}
+                            disabled={!activePlan.simulation_config.net_worth_ceiling_enabled}
+                          />
+                        </div>
+                        {activePlan.simulation_config.net_worth_ceiling > 0 && (
+                          <div className="text-right shrink-0">
+                            <p className="text-xs text-gray-500">Ceiling</p>
+                            <p className="text-sm font-mono text-teal-400">{fmtShort(activePlan.simulation_config.net_worth_ceiling)}</p>
+                          </div>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-gray-500 leading-relaxed bg-black/20 p-2 rounded border border-gray-800/50">
+                        When net worth reaches the ceiling, excess investment growth is liquidated and redirected to giving each month — capping accumulation and converting compounding returns into charitable impact.
+                      </p>
+                      {activePlan.simulation_config.net_worth_ceiling_enabled && (lastSnap?.ceiling_diverted_to_giving ?? 0) > 0 && (
+                        <div className="flex items-center gap-2 text-xs bg-teal-900/20 border border-teal-800/30 rounded px-2 py-1.5">
+                          <Heart size={11} className="text-teal-400" />
+                          <span className="text-teal-300">Ceiling active — {fmtShort(lastSnap?.ceiling_diverted_to_giving)} diverted to giving last month</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {simResult && <SensitivityPanel planId={activePlan.id} simParams={{ filing_status: activePlan.simulation_config.filing_status || 'mfj', household_size: activePlan.simulation_config.household_size || 2 }} onResult={snaps => { setWhatIfSnapshots(snaps); if (snaps && validView !== 'overview') setChartView('overview') }} />}
                 </div>
 
                 <div className="lg:col-span-4 space-y-5">
@@ -734,6 +881,65 @@ export default function Dashboard() {
                     </div>
                     <div className="overflow-y-auto max-h-[520px] pr-0.5">
                       <TabContent tab={tab} plan={activePlan} />
+                    </div>
+                  </div>
+
+                  {/* Tax / Simulation Settings */}
+                  <div className="card space-y-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Settings2 size={14} className="text-gray-500" />
+                      <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Simulation Settings</h3>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-gray-500 mb-1">Filing Status</label>
+                        <select
+                          value={activePlan.simulation_config.filing_status || 'mfj'}
+                          onChange={e => updateConfigMutation.mutate({ filing_status: e.target.value })}
+                          className="input w-full text-xs bg-gray-900 border-gray-700"
+                        >
+                          <option value="single">Single</option>
+                          <option value="mfj">Married Filing Jointly</option>
+                          <option value="mfs">Married Filing Separately</option>
+                          <option value="hoh">Head of Household</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-gray-500 mb-1">Household Size</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={12}
+                          value={activePlan.simulation_config.household_size || 2}
+                          onChange={e => updateConfigMutation.mutate({ household_size: parseInt(e.target.value) || 1 })}
+                          className="input w-full text-xs bg-gray-900 border-gray-700 font-mono"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-gray-500 mb-1">Horizon (years)</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={60}
+                          value={activePlan.simulation_config.horizon_years}
+                          onChange={e => updateConfigMutation.mutate({ horizon_years: parseInt(e.target.value) || 30 })}
+                          className="input w-full text-xs bg-gray-900 border-gray-700 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-gray-500 mb-1">MC Passes</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={5000}
+                          step={100}
+                          value={activePlan.simulation_config.monte_carlo_passes}
+                          onChange={e => updateConfigMutation.mutate({ monte_carlo_passes: parseInt(e.target.value) || 0 })}
+                          className="input w-full text-xs bg-gray-900 border-gray-700 font-mono"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>

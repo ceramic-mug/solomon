@@ -132,6 +132,7 @@ func (r *Repository) GetPlan(ctx context.Context, id uuid.UUID) (domain.Plan, er
 		Preload("InvestmentAccounts").
 		Preload("LifeEvents.Impacts").
 		Preload("GivingTargets").
+		Preload("Children").
 		First(&m, "id = ?", id).Error
 	if err != nil {
 		return domain.Plan{}, fmt.Errorf("get plan: %w", err)
@@ -215,6 +216,10 @@ func (r *Repository) ForkPlan(ctx context.Context, parentID uuid.UUID, forkMonth
 		fork.GivingTargets[i].ID = uuid.New()
 		fork.GivingTargets[i].PlanID = fork.ID
 	}
+	for i := range fork.Children {
+		fork.Children[i].ID = uuid.New()
+		fork.Children[i].PlanID = fork.ID
+	}
 	for i := range fork.LifeEvents {
 		fork.LifeEvents[i].ID = uuid.New()
 		fork.LifeEvents[i].PlanID = fork.ID
@@ -263,6 +268,12 @@ func (r *Repository) savePlanFull(ctx context.Context, p domain.Plan) (domain.Pl
 		}
 		for _, g := range p.GivingTargets {
 			if err := tx.Create(givingToModel(g)).Error; err != nil {
+				return err
+			}
+		}
+		for _, ch := range p.Children {
+			m := childToModel(ch)
+			if err := tx.Create(&m).Error; err != nil {
 				return err
 			}
 		}
@@ -460,6 +471,27 @@ func (r *Repository) DeleteGivingTarget(ctx context.Context, id uuid.UUID) error
 // UpdateSimulationConfig persists changes to a plan's simulation configuration.
 func (r *Repository) UpdateSimulationConfig(ctx context.Context, c domain.SimulationConfig) error {
 	return r.db.WithContext(ctx).Save(simConfigToModel(c)).Error
+}
+
+// ---- Children ----
+
+func (r *Repository) CreateChild(ctx context.Context, c domain.Child) (domain.Child, error) {
+	if c.ID == uuid.Nil {
+		c.ID = uuid.New()
+	}
+	m := childToModel(c)
+	if err := r.db.WithContext(ctx).Create(&m).Error; err != nil {
+		return domain.Child{}, fmt.Errorf("create child: %w", err)
+	}
+	return c, nil
+}
+
+func (r *Repository) UpdateChild(ctx context.Context, c domain.Child) error {
+	return r.db.WithContext(ctx).Save(childToModel(c)).Error
+}
+
+func (r *Repository) DeleteChild(ctx context.Context, id uuid.UUID) error {
+	return r.db.WithContext(ctx).Delete(&ChildModel{}, "id = ?", id).Error
 }
 
 // ensure json import is used

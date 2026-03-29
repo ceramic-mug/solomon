@@ -339,3 +339,53 @@ func (h *ComponentHandler) DeleteGiving(c echo.Context) error {
 	}
 	return c.NoContent(http.StatusNoContent)
 }
+
+// ---- Children ----
+
+func (h *ComponentHandler) CreateChild(c echo.Context) error {
+	planID, _, err := h.planID(c)
+	if err != nil {
+		return err
+	}
+	var child domain.Child
+	if err := c.Bind(&child); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	child.ID = uuid.New()
+	child.PlanID = planID
+	created, err := h.repo.CreateChild(c.Request().Context(), child)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(http.StatusCreated, created)
+}
+
+func (h *ComponentHandler) UpdateChild(c echo.Context) error {
+	_, _, err := h.planID(c)
+	if err != nil {
+		return err
+	}
+	var child domain.Child
+	if err := c.Bind(&child); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if err := h.repo.UpdateChild(c.Request().Context(), child); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(http.StatusOK, child)
+}
+
+func (h *ComponentHandler) DeleteChild(c echo.Context) error {
+	_, _, err := h.planID(c)
+	if err != nil {
+		return err
+	}
+	subID, err := uuid.Parse(c.Param("sid"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid child id")
+	}
+	if err := h.repo.DeleteChild(c.Request().Context(), subID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return c.NoContent(http.StatusNoContent)
+}
