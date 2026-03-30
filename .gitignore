@@ -224,6 +224,7 @@ docker-compose.override.yml
 # ---- Secrets ----
 *.key
 .env
+deploy.sh
 
 # VS CODE
 .vscode

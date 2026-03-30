@@ -90,8 +90,8 @@ export default function Register() {
           {error && <p className="text-sm text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">{error}</p>}
 
           <div>
-            <label className="label">Your name</label>
-            <input type="text" className="input w-full" placeholder="Joshua & Sarah" value={form.name} onChange={set('name')} required />
+            <label className="label">Name</label>
+            <input type="text" className="input w-full" placeholder="Name" value={form.name} onChange={set('name')} required />
           </div>
           <div>
             <label className="label">Email</label>
@@ -108,7 +108,7 @@ export default function Register() {
               <input
                 type="text"
                 className="input w-full uppercase"
-                placeholder="TX"
+                placeholder="WV"
                 maxLength={2}
                 value={form.state_code}
                 onChange={set('state_code')}

@@ -10,7 +10,7 @@
     --color-border:  #2a1f1a;
     --color-text:    #ede0d3;
     --color-muted:   #7a5c4e;
-    --color-accent:  #d48200;
+    --color-accent:  #9e6035;
   }
 
   html {
@@ -36,7 +36,7 @@
   ::-webkit-scrollbar-thumb:hover { background: #5c443a; }
 
   /* Selection */
-  ::selection { background: #6b3a00; color: #fbd89a; }
+  ::selection { background: #5a3018; color: #fbd89a; }
 
   /* Form elements styled warmly by @tailwindcss/forms override */
   [type='text'],
@@ -56,12 +56,12 @@
   [type='number']:focus,
   textarea:focus,
   select:focus {
-    border-color: #d48200 !important;
-    box-shadow: 0 0 0 2px rgba(212, 130, 0, 0.2) !important;
+    border-color: #9e6035 !important;
+    box-shadow: 0 0 0 2px rgba(158, 96, 53, 0.2) !important;
     outline: none !important;
   }
   [type='checkbox'] {
-    accent-color: #d48200;
+    accent-color: #9e6035;
   }
   select option {
     background-color: #1f1714;
@@ -78,11 +78,11 @@
 
   /* ---- Buttons ---- */
   .btn-primary {
-    background-color: #b36800;
+    background-color: #7a4828;
     color: #fdf0d5;
     @apply font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer;
   }
-  .btn-primary:hover:not(:disabled) { background-color: #d48200; }
+  .btn-primary:hover:not(:disabled) { background-color: #9e6035; }
   .btn-primary:disabled { opacity: 0.35; cursor: not-allowed; }
 
   .btn-secondary {
@@ -115,8 +115,8 @@
     @apply rounded-lg px-3 py-2 focus:outline-none transition-colors w-full;
   }
   .input:focus {
-    border-color: #d48200;
-    box-shadow: 0 0 0 2px rgba(212, 130, 0, 0.2);
+    border-color: #9e6035;
+    box-shadow: 0 0 0 2px rgba(158, 96, 53, 0.2);
   }
   .input::placeholder { color: #5c443a; }
   .input:disabled { opacity: 0.5; cursor: not-allowed; }
